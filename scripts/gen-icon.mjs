@@ -36,6 +36,16 @@ const svg = `<?xml version="1.0" encoding="UTF-8"?>
 
 async function main() {
   await fs.mkdir(outDir, { recursive: true });
+  const icoPath = path.join(outDir, 'icon.ico');
+  const force = process.argv.includes('--force') || process.env.AURORA_FORCE_ICON_GEN === '1';
+  try {
+    const st = await fs.stat(icoPath);
+    if (!force && st.size > 0) {
+      console.log('Icons already present →', icoPath, '(pass --force to regenerate)');
+      return;
+    }
+  } catch { /* generate */ }
+
   const browser = await chromium.launch();
   const page = await browser.newPage({
     viewport: { width: SIZE, height: SIZE },
