@@ -1,0 +1,129 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: linux-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Require lockfile
+        run: test -f package-lock.json
+
+      - name: Install (frozen)
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test -- --run
+
+      - name: Index integration bench
+        run: npm run test:index-bench -- --files 800
+
+      - name: Build web
+        run: npm run build:web
+
+      - name: Build electron renderer
+        run: npm run build:electron-renderer
+
+  windows-gate:
+    name: windows-gate
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install (frozen)
+        run: npm ci
+        env:
+          FFMPEG_FETCH: mirror
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test -- --run
+
+      - name: Real-disk search assert
+        run: npm run test:real-search
+
+      - name: Install Playwright Chromium
+        run: npx playwright install chromium --with-deps
+
+      - name: Playwright e2e
+        run: npm run test:e2e
+
+  package-win:
+    name: package-win
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    needs: [test, windows-gate]
+    runs-on: windows-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install (frozen)
+        run: npm ci
+        env:
+          FFMPEG_FETCH: mirror
+
+      - name: Ensure ffmpeg binary
+        run: npm run ffmpeg:ensure
+        env:
+          FFMPEG_FETCH: mirror
+
+      - name: Build unsigned desktop
+        run: npm run build:desktop
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: win-unpacked smoke (required)
+        run: npm run test:smoke-win
+        env:
+          AURORA_SMOKE_REQUIRE: '1'
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: aurora-files-win-x64
+          path: |
+            release/AuroraFiles-Setup-*.exe
+            release/AuroraFiles-Portable-*.exe
+            release/latest.yml
+          if-no-files-found: error

@@ -1,0 +1,38 @@
+# dependencies & build
+node_modules/
+dist/
+dist-ssr/
+release/
+.tools/
+out/
+
+# local / secrets
+*.local
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+Thumbs.db
+
+# editors / agents
+.vscode/
+.idea/
+.cursor/
+*.swp
+
+# test / coverage
+coverage/
+playwright-report/
+test-results/
+blob-report/
+
+# ffmpeg binary (fetched by postinstall / ffmpeg:ensure — do not commit)
+node_modules/ffmpeg-static/ffmpeg
+node_modules/ffmpeg-static/ffmpeg.exe
+node_modules/ffmpeg-static/*.gz
+*.exe.blockmap
+
+# OS / temp
+*.tmp
+*.temp

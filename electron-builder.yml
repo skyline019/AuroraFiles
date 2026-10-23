@@ -1,0 +1,33 @@
+appId: com.aurora.files
+productName: Aurora Files
+copyright: Copyright © Aurora
+directories:
+  output: release
+  buildResources: electron/build
+files:
+  - dist/**/*
+  - electron/**/*
+  - package.json
+asar: true
+npmRebuild: false
+extraMetadata:
+  main: electron/main.mjs
+win:
+  icon: electron/build/icon.ico
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: portable
+      arch:
+        - x64
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  shortcutName: 极光文件
+  installerIcon: electron/build/icon.ico
+  uninstallerIcon: electron/build/icon.ico
+  artifactName: ${productName}-${version}-Setup.${ext}
+portable:
+  artifactName: ${productName}-${version}-Portable.${ext}

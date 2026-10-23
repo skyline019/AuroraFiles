@@ -1,0 +1,111 @@
+{
+  "name": "aurora-files",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Aurora Files — Apple-style file manager for Windows (Electron + real disk)",
+  "author": "Aurora",
+  "type": "module",
+  "main": "electron/main.mjs",
+  "scripts": {
+    "dev": "vite",
+    "dev:web": "vite",
+    "dev:desktop": "concurrently -k \"vite\" \"wait-on http://127.0.0.1:5173 && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
+    "build": "vite build",
+    "build:web": "vite build",
+    "build:electron-renderer": "cross-env AURORA_ELECTRON=1 vite build",
+    "build:desktop": "npm run icons:gen && cross-env AURORA_ELECTRON=1 vite build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win --x64",
+    "build:desktop:dir": "npm run icons:gen && cross-env AURORA_ELECTRON=1 vite build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win --x64 --dir",
+    "icons:gen": "node scripts/gen-icon.mjs",
+    "ffmpeg:ensure": "node scripts/ensure-ffmpeg.mjs",
+    "postinstall": "node scripts/ensure-ffmpeg.mjs",
+    "ci": "npm run typecheck && npm test -- --run && npm run test:e2e && npm run test:real-search && npm run test:smoke-win",
+    "preview": "vite preview",
+    "desktop": "npm run dev:desktop",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "test:smoke-win": "node scripts/win-unpacked-smoke.mjs",
+    "test:real-search": "node scripts/real-search-e2e.mjs --assert",
+    "test:index-bench": "node scripts/index-bench.mjs",
+    "test:index-bench:json": "node scripts/index-bench.mjs --json release/index-bench.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "clsx": "2.1.1",
+    "electron-updater": "^6.6.2",
+    "ffmpeg-static": "^5.2.0",
+    "framer-motion": "^14.3.0",
+    "jszip": "^3.10.2",
+    "lucide-react": "^1.59.0",
+    "mammoth": "^1.13.0",
+    "react": "19.2.6",
+    "react-dom": "19.2.6",
+    "tailwind-merge": "3.4.0",
+    "xlsx": "^0.18.5",
+    "zustand": "^5.0.15"
+  },
+  "build": {
+    "appId": "com.aurora.files",
+    "productName": "Aurora Files",
+    "executableName": "AuroraFiles",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "shared/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "electron/index/usn-read.ps1",
+      "node_modules/ffmpeg-static/**"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "electron/build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "Aurora Files",
+      "uninstallDisplayName": "Aurora Files",
+      "artifactName": "AuroraFiles-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "AuroraFiles-Portable-${version}.${ext}"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "skyline019",
+        "repo": "AuroraFiles",
+        "releaseType": "release"
+      }
+    ]
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.1",
+    "@tailwindcss/vite": "4.1.17",
+    "@types/node": "22.19.17",
+    "@types/react": "19.2.7",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "5.1.1",
+    "@vitest/coverage-v8": "^5.0.5",
+    "concurrently": "^9.2.1",
+    "cross-env": "^7.0.3",
+    "electron": "^37.2.0",
+    "electron-builder": "^26.0.12",
+    "png-to-ico": "^3.0.2",
+    "tailwindcss": "4.1.17",
+    "typescript": "5.9.3",
+    "vite": "7.3.2",
+    "vite-plugin-singlefile": "2.3.0",
+    "vitest": "^5.0.5",
+    "wait-on": "^8.0.4"
+  }
+}
