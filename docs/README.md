@@ -4,7 +4,8 @@
 |---|---|
 | [RELEASE.md](./RELEASE.md) | Build, pack, smoke, updater, signing |
 | [RELEASE_NOTES_v0.1.0.md](./RELEASE_NOTES_v0.1.0.md) | First public cut notes |
-| [RELEASE_NOTES_v0.1.3.md](./RELEASE_NOTES_v0.1.3.md) | **Current** release notes (0.1.1–0.1.3) |
+| [RELEASE_NOTES_v0.1.4.md](./RELEASE_NOTES_v0.1.4.md) | **Current** release notes (docs + CI + CN=skyline019 signed) |
+| [RELEASE_NOTES_v0.1.3.md](./RELEASE_NOTES_v0.1.3.md) | Prior notes (0.1.1–0.1.3) |
 | [index-tracks.md](./index-tracks.md) | UI / Perf dual-track indexing |
 | [preview-media.md](./preview-media.md) | Image/video preview, CJK paths, MIME |
 | [indexd-resident.md](./indexd-resident.md) | `aurora-indexd` resident index |

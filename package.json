@@ -1,9 +1,9 @@
 {
   "name": "aurora-files",
   "private": true,
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Aurora Files — Apple-style file manager for Windows (Electron + real disk)",
-  "author": "Aurora",
+  "author": "skylinezhanghan-wq",
   "type": "module",
   "main": "electron/main.mjs",
   "scripts": {
@@ -15,7 +15,8 @@
     "build:electron-renderer": "cross-env AURORA_ELECTRON=1 vite build",
     "build:desktop": "npm run icons:gen && cross-env AURORA_ELECTRON=1 vite build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win --x64 --publish never",
     "build:desktop:dir": "npm run icons:gen && cross-env AURORA_ELECTRON=1 vite build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win --x64 --dir --publish never",
-    "build:desktop:publish": "npm run icons:gen && cross-env AURORA_ELECTRON=1 vite build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win --x64 --publish always",
+    "build:desktop:signed": "npm run icons:gen && cross-env AURORA_ELECTRON=1 vite build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=true electron-builder --win --x64 --publish never",
+    "build:desktop:publish": "npm run icons:gen && cross-env AURORA_ELECTRON=1 vite build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=true electron-builder --win --x64 --publish always",
     "icons:gen": "node scripts/gen-icon.mjs",
     "ffmpeg:ensure": "node scripts/ensure-ffmpeg.mjs",
     "postinstall": "node scripts/ensure-ffmpeg.mjs",
@@ -137,7 +138,7 @@
     "publish": [
       {
         "provider": "github",
-        "owner": "skyline019",
+        "owner": "skylinezhanghan-wq",
         "repo": "AuroraFiles",
         "releaseType": "release"
       }

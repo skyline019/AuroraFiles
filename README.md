@@ -10,10 +10,10 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/skyline019/AuroraFiles/actions/workflows/ci.yml"><img src="https://github.com/skyline019/AuroraFiles/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
-  <a href="https://github.com/skyline019/AuroraFiles/releases"><img src="https://img.shields.io/github/v/release/skyline019/AuroraFiles?include_prereleases&label=release" alt="Release" /></a>
+  <a href="https://github.com/skylinezhanghan-wq/AuroraFiles/actions/workflows/ci.yml"><img src="https://github.com/skylinezhanghan-wq/AuroraFiles/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://github.com/skylinezhanghan-wq/AuroraFiles/releases"><img src="https://img.shields.io/github/v/release/skylinezhanghan-wq/AuroraFiles?include_prereleases&label=release" alt="Release" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License" /></a>
-  <a href="https://github.com/skyline019/AuroraFiles/releases"><img src="https://img.shields.io/badge/platform-Windows%20x64-0078D4" alt="Platform" /></a>
+  <a href="https://github.com/skylinezhanghan-wq/AuroraFiles/releases"><img src="https://img.shields.io/badge/platform-Windows%20x64-0078D4" alt="Platform" /></a>
 </p>
 
 <p align="center">
@@ -21,7 +21,7 @@
   <a href="#features">Features</a> ·
   <a href="#development">Development</a> ·
   <a href="#documentation">Docs</a> ·
-  <a href="https://github.com/skyline019/AuroraFiles/releases">Releases</a>
+  <a href="https://github.com/skylinezhanghan-wq/AuroraFiles/releases">Releases</a>
 </p>
 
 ---
@@ -29,6 +29,8 @@
 Aurora Files is a desktop file manager for **Windows x64**, built with Electron + React. It talks to the real filesystem (not a toy sandbox), keeps a volume search index in the background, and aims for the calm density of Finder — tabs, Quick Look, gallery, and a command palette.
 
 > Prefer trying the UI in a browser first? `npm run dev` loads a **demo disk**. The desktop app (`npm run desktop`) is the real thing.
+
+**Canonical repo:** [skylinezhanghan-wq/AuroraFiles](https://github.com/skylinezhanghan-wq/AuroraFiles). Desktop builds from **v0.1.4** are Authenticode-signed as **CN=skyline019** (self-issued certificate).
 
 ## Screenshots
 
@@ -46,14 +48,14 @@ Aurora Files is a desktop file manager for **Windows x64**, built with Electron 
 
 ## Install
 
-Grab the latest **unsigned** build from [Releases](https://github.com/skyline019/AuroraFiles/releases):
+Grab the latest build from [Releases](https://github.com/skylinezhanghan-wq/AuroraFiles/releases):
 
 | Artifact | What it is |
 |---|---|
-| `AuroraFiles-Setup-*.exe` | NSIS installer (~148 MB, includes ffmpeg) |
-| `AuroraFiles-Portable-*.exe` | Portable, no install |
+| `AuroraFiles-Setup-*.exe` | NSIS installer (~148 MB, includes ffmpeg); signed `CN=skyline019` |
+| `AuroraFiles-Portable-*.exe` | Portable; signed `CN=skyline019` |
 
-Windows SmartScreen may warn until the app is code-signed — that’s expected for early builds. Release notes: [v0.1.3](docs/RELEASE_NOTES_v0.1.3.md).
+SmartScreen may still warn on first run — the cert is self-issued, not an EV commercial identity. Release notes: [v0.1.4](docs/RELEASE_NOTES_v0.1.4.md).
 
 ## Features
 
@@ -69,7 +71,7 @@ Windows SmartScreen may warn until the app is code-signed — that’s expected 
 Requires **Node 22+** and Windows for the full desktop path.
 
 ```bash
-git clone https://github.com/skyline019/AuroraFiles.git
+git clone https://github.com/skylinezhanghan-wq/AuroraFiles.git
 cd AuroraFiles
 npm ci
 npm run ffmpeg:ensure   # download bundled ffmpeg if missing
@@ -88,6 +90,7 @@ npm run desktop         # Electron + Vite HMR (real disk)
 | `npm run test:perf-volume` | Volume index (Perf track) |
 | `npm run native:indexd` | Build Rust `aurora-indexd` |
 | `npm run build:desktop` | Unsigned NSIS + portable |
+| `npm run build:desktop:signed` | Signed pack (`CSC_LINK` + `CSC_KEY_PASSWORD`) |
 
 Packaging, updater, and smoke gates: [`docs/RELEASE.md`](docs/RELEASE.md).
 
@@ -134,14 +137,14 @@ Index stack: Electron orchestrator → optional [`aurora-indexd`](docs/indexd-re
 2. **windows-gate** — typecheck, unit, real-disk search, Playwright  
 3. **package-win** (`main`) — unsigned desktop package + smoke artifact  
 
-PRs need `test` + `windows-gate` green.
+PRs need `test` + `windows-gate` green. Latest green run on this repo: Actions → CI.
 
 ## Contributing
 
-Issues and PRs are welcome. Please keep changes focused, run `npm test` (and Windows e2e when touching shell / index / preview), and prefer linking perf claims to `docs/perf-ledger.md` or a `perf-out/` run id.
+Issues and PRs are welcome on **[skylinezhanghan-wq/AuroraFiles](https://github.com/skylinezhanghan-wq/AuroraFiles)**. Please keep changes focused, run `npm test` (and Windows e2e when touching shell / index / preview), and prefer linking perf claims to `docs/perf-ledger.md` or a `perf-out/` run id.
 
 ## License
 
-[MIT](LICENSE) © 2026 [skyline019](https://github.com/skyline019)
+[MIT](LICENSE) © 2026 [skylinezhanghan-wq](https://github.com/skylinezhanghan-wq)
 
-Desktop builds also redistribute **Electron/Chromium** and **ffmpeg-static** (GPL). If you redistribute binaries, follow their terms.
+Desktop builds also redistribute **Electron/Chromium** and **ffmpeg-static** (GPL). If you redistribute binaries, follow their terms. Release binaries are code-signed as **CN=skyline019**.
