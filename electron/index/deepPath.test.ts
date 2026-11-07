@@ -69,37 +69,41 @@ describe.skipIf(!win)('deep path strict matrix', () => {
     await fs.rm(idxDir, { recursive: true, force: true }).catch(() => undefined);
   });
 
-  it('D1+D2+D4: nested path >260 indexed without \\\\?\\ and searchable', async () => {
-    const { file } = await mkDeepFile(tree, 280);
-    expect(file.length).toBeGreaterThan(260);
-    expect(file.includes('\\\\?\\')).toBe(false);
+  it(
+    'D1+D2+D4: nested path >260 indexed without \\\\?\\ and searchable',
+    { timeout: 60_000 },
+    async () => {
+      const { file } = await mkDeepFile(tree, 280);
+      expect(file.length).toBeGreaterThan(260);
+      expect(file.includes('\\\\?\\')).toBe(false);
 
-    const entries: { path: string; name: string }[] = [];
-    await parallelDirentWalk(tree, {
-      maxDepth: 100,
-      maxScan: 50_000,
-      onEntry: (e) => entries.push(e),
-    });
-    const hit = entries.find((e) => e.name === 'deep_target.txt');
-    expect(hit).toBeTruthy();
-    expect(hit!.path.length).toBeGreaterThan(260);
-    expect(hit!.path.includes('\\\\?\\')).toBe(false);
+      const entries: { path: string; name: string }[] = [];
+      await parallelDirentWalk(tree, {
+        maxDepth: 100,
+        maxScan: 50_000,
+        onEntry: (e) => entries.push(e),
+      });
+      const hit = entries.find((e) => e.name === 'deep_target.txt');
+      expect(hit).toBeTruthy();
+      expect(hit!.path.length).toBeGreaterThan(260);
+      expect(hit!.path.includes('\\\\?\\')).toBe(false);
 
-    disposeVolumeIndex(tree);
-    await ensureIndexed(tree, {
-      rebuild: true,
-      maxDepth: 100,
-      maxScan: 50_000,
-      leanMemory: true,
-      persist: false,
-      waitDebt: true,
-      liveFollowers: false,
-      skipMode: 'minimal',
-    });
-    await waitIndexDebt(tree, { timeoutMs: 60_000 });
-    const q = await queryIndex(tree, 'deep_target', { maxResults: 20 });
-    expect(q.items.some((i: { name: string }) => i.name === 'deep_target.txt')).toBe(true);
-  });
+      disposeVolumeIndex(tree);
+      await ensureIndexed(tree, {
+        rebuild: true,
+        maxDepth: 100,
+        maxScan: 50_000,
+        leanMemory: true,
+        persist: false,
+        waitDebt: true,
+        liveFollowers: false,
+        skipMode: 'minimal',
+      });
+      await waitIndexDebt(tree, { timeoutMs: 60_000 });
+      const q = await queryIndex(tree, 'deep_target', { maxResults: 20 });
+      expect(q.items.some((i: { name: string }) => i.name === 'deep_target.txt')).toBe(true);
+    },
+  );
 
   it('D3: hidden dir under deep path still enumerated (minimal skip)', async () => {
     const hidden = path.join(tree, '.secret_deep');

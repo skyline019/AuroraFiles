@@ -4,6 +4,8 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     environment: 'node',
+    // Windows CI runners are slower on temp-disk FS fixtures than local SSDs.
+    testTimeout: process.env.CI ? 20_000 : 10_000,
     include: ['src/**/*.test.ts', 'shared/**/*.test.ts', 'electron/**/*.test.ts'],
     coverage: {
       provider: 'v8',
