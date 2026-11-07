@@ -1,5 +1,7 @@
 /**
  * 索引策略偏好：maxScan / 额外排除目录名（持久化到 userData）
+ *
+ * maxScan === 0 → 无上限（walk 侧用 Number.MAX_SAFE_INTEGER）
  */
 import fs from 'node:fs/promises';
 import fssync from 'node:fs';
@@ -7,11 +9,13 @@ import path from 'node:path';
 import { getIndexDir } from './persist.mjs';
 import { normalizeTrackId } from './indexTrack.mjs';
 
-/** 默认抬高：单卷常见 50–200 万条目；UI / clamp 上限约等于「不截断」 */
-export const DEFAULT_MAX_SCAN = 2_000_000;
+/** 默认无上限：0 表示不截断 */
+export const DEFAULT_MAX_SCAN = 0;
 export const MIN_MAX_SCAN = 5_000;
-/** 实质解除封顶（约 5 千万）；0 / 负数 / Infinity 均映射到此值 */
+/** 用户填正数时的软顶（防误填天文数字）；0 不受此限 */
 export const MAX_MAX_SCAN = 50_000_000;
+/** walk / ensureIndexed 实际使用的「无上限」哨兵 */
+export const UNLIMITED_SCAN = Number.MAX_SAFE_INTEGER;
 
 /** 高压整卷：仅跳过无法安全枚举的目录（含隐藏项 / 回收站都扫） */
 export const MINIMAL_SKIP = [
@@ -59,11 +63,24 @@ export function resetIndexPrefsCache() {
   cachedDir = null;
 }
 
+/**
+ * 规范化用户输入的 maxScan。
+ * 0 / 负数 / Infinity / 'unlimited' → 0（无上限）
+ * 正数夹到 [MIN_MAX_SCAN, MAX_MAX_SCAN]
+ */
 export function clampMaxScan(n) {
-  if (n === 0 || n === '0' || n === Infinity || n === 'unlimited') return MAX_MAX_SCAN;
+  if (n === 0 || n === '0' || n === Infinity || n === 'unlimited') return 0;
   const v = Number(n);
   if (!Number.isFinite(v)) return DEFAULT_MAX_SCAN;
-  if (v < 0) return MAX_MAX_SCAN;
+  if (v < 0) return 0;
+  if (v === 0) return 0;
+  return Math.min(MAX_MAX_SCAN, Math.max(MIN_MAX_SCAN, Math.round(v)));
+}
+
+/** 供 walk 使用：0 → UNLIMITED_SCAN */
+export function resolveScanLimit(maxScan) {
+  const v = maxScan == null ? DEFAULT_MAX_SCAN : Number(maxScan);
+  if (!Number.isFinite(v) || v <= 0) return UNLIMITED_SCAN;
   return Math.min(MAX_MAX_SCAN, Math.max(MIN_MAX_SCAN, Math.round(v)));
 }
 
@@ -81,11 +98,14 @@ export function normalizeExcludeNames(list) {
   return out.slice(0, 64);
 }
 
-/** 历史默认 12 万会悄悄截断大盘；升级时抬到新默认（用户显式改过的保留） */
+/**
+ * 历史默认 12 万 / 200 万会悄悄截断大盘；升级到无上限。
+ * 用户显式改过的其它正数保留。
+ */
 function migrateMaxScan(raw) {
   if (raw == null) return DEFAULT_MAX_SCAN;
   const n = Number(raw);
-  if (n === 120_000) return DEFAULT_MAX_SCAN;
+  if (n === 120_000 || n === 2_000_000) return 0;
   return clampMaxScan(n);
 }
 
@@ -152,7 +172,10 @@ export function effectiveSkipSet(prefs = getIndexPrefsSync(), mode = 'builtin') 
   return new Set([...BUILTIN_SKIP, ...extra]);
 }
 
+/** 返回 walk 可用的扫描上限（0 prefs → UNLIMITED_SCAN） */
 export function effectiveMaxScan(optsMax, prefs = getIndexPrefsSync()) {
-  if (optsMax != null && Number.isFinite(Number(optsMax))) return clampMaxScan(optsMax);
-  return prefs.maxScan || DEFAULT_MAX_SCAN;
+  if (optsMax != null && Number.isFinite(Number(optsMax))) {
+    return resolveScanLimit(clampMaxScan(optsMax));
+  }
+  return resolveScanLimit(prefs.maxScan);
 }

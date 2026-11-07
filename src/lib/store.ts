@@ -94,6 +94,7 @@ interface Store {
     building: boolean;
     refreshing?: boolean;
     size: number;
+    scanned?: number;
     source?: string;
     watching?: boolean;
     usnReadable?: boolean | null;
@@ -277,6 +278,7 @@ export const useStore = create<Store>()((set, get) => {
             building: !!st.building,
             refreshing: !!st.refreshing,
             size: st.size,
+            scanned: st.scanned,
             source: st.source,
             watching: st.watching,
             usnReadable: st.usnReadable,
@@ -1070,12 +1072,20 @@ export const useStore = create<Store>()((set, get) => {
           redoStack: [],
           booting: false,
           indexRoot: driveRoot.endsWith('\\') ? driveRoot : `${driveRoot}\\`,
-          indexInfo: { ready: false, building: true, size: 0 },
+          indexInfo: { ready: false, building: true, size: 0, scanned: 0 },
         });
         await get().refreshFolder(desk);
-        const roots = fixedDrives.length
-          ? fixedDrives
-          : [{ path: driveRoot }];
+        const deskVol = (driveRoot.endsWith('\\') ? driveRoot : `${driveRoot}\\`).toUpperCase();
+        // 当前桌面卷优先串行建索，避免多盘并行 IO 饿死导致「一直建立索引」
+        const roots = (fixedDrives.length ? fixedDrives : [{ path: driveRoot }])
+          .slice()
+          .sort((a, b) => {
+            const ap = String(a.path || '').toUpperCase();
+            const bp = String(b.path || '').toUpperCase();
+            if (ap.startsWith(deskVol.slice(0, 2))) return -1;
+            if (bp.startsWith(deskVol.slice(0, 2))) return 1;
+            return 0;
+          });
         void api().ensureIndexes(roots, { maxDepth: 64, track: 'ui' })
           .then(() => get().refreshIndexStatus())
           .catch(() => { void get().refreshIndexStatus(); });
@@ -1087,9 +1097,9 @@ export const useStore = create<Store>()((set, get) => {
             const info = get().indexInfo;
             // Stop when cold build done (background softRefresh must not keep the chip amber)
             if (info?.ready && !info.building) clearInterval(timer);
-            else if (ticks > 400) clearInterval(timer); // ~20 min safety for large volumes
+            else if (ticks > 900) clearInterval(timer); // ~15 min @1s / safety
           });
-        }, 3000);
+        }, 1000);
       } catch (err) {
         set({ booting: false });
         get().toast((err as Error).message || '无法连接磁盘，已保留演示盘', 'error');

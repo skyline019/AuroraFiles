@@ -1798,14 +1798,19 @@ export function indexStatus(root) {
   const disk = diskCacheStat(root);
   const mu = process.memoryUsage();
   const nodeRss = Math.round((mu.rss / (1024 * 1024)) * 10) / 10;
+  // native 冷扫时 _nativeCount 要等 barrier 才更新；scanned 由 onProgress 推进。
+  // 状态栏用 max(size, scanned) 避免长时间停在「正在建立索引…」且无进度。
+  const entries = idx.entryCount();
+  const scanned = Math.max(0, Number(idx.scanned) || 0);
+  const size = Math.max(entries, idx.building ? scanned : 0);
   return {
     ready: idx.ready,
     // Cold build only — do NOT OR refreshing (softRefresh) or the status bar
     // stays on「正在建立索引」forever while USN/dirty catch-up runs.
     building: !!idx.building,
     refreshing: !!idx.refreshing,
-    scanned: idx.scanned,
-    size: idx.entryCount(),
+    scanned,
+    size,
     metaSize: idx.meta.size,
     backend: idx._backend || 'js',
     indexd_rss_mb: null, // refreshed async via refreshIndexdStats
@@ -1908,14 +1913,23 @@ export async function backfillFrn(root, budget = 3000) {
   return n;
 }
 
-/** 主进程：为多个盘符并行建索（可移动盘默认跳过） */
+/**
+ * 多盘建索。UI 轨默认串行：避免多卷并行饿死当前盘 IO，
+ * 状态栏长时间卡在「正在建立索引」。Perf / maxPerf 仍并行。
+ */
 export async function ensureVolumes(roots, opts = {}) {
   const list = (roots || []).filter(Boolean);
-  const out = [];
-  for (const root of list) {
-    out.push(ensureIndexed(root, opts));
+  const parallel = opts.maxPerf === true
+    || opts.track === 'perf'
+    || opts.parallel === true;
+  if (!parallel) {
+    const out = [];
+    for (const root of list) {
+      out.push(await ensureIndexed(root, opts));
+    }
+    return out;
   }
-  return Promise.all(out);
+  return Promise.all(list.map((root) => ensureIndexed(root, opts)));
 }
 
 export function disposeVolumeIndex(root) {

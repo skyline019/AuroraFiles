@@ -20,6 +20,8 @@ describe('indexStatusLabel', () => {
   it('formats building and ready', () => {
     expect(indexStatusLabel({ building: true, size: 1200 })).toContain('索引中');
     expect(indexStatusLabel({ building: true, size: 0 })).toBe('正在建立索引…');
+    // native 冷扫：size 仍 0 时用 scanned 显示进度
+    expect(indexStatusLabel({ building: true, size: 0, scanned: 42_000 })).toContain('42,000');
     expect(indexStatusLabel({ ready: true, size: 5000, disk: { exists: true }, watching: true })).toContain('监视');
     expect(indexStatusLabel({ ready: true, size: 1, disk: { exists: true, deltaLines: 3 } })).toContain('增量落盘');
     expect(indexStatusLabel({ ready: true, size: 9, fts: { ok: true }, usnReadable: true })).toContain('USN');

@@ -4,7 +4,8 @@
 |---|---|
 | [RELEASE.md](./RELEASE.md) | Build, pack, smoke, updater, signing |
 | [RELEASE_NOTES_v0.1.0.md](./RELEASE_NOTES_v0.1.0.md) | First public cut notes |
-| [RELEASE_NOTES_v0.1.5.md](./RELEASE_NOTES_v0.1.5.md) | **Current** release notes (context menu + e2e coverage) |
+| [RELEASE_NOTES_v0.1.6.md](./RELEASE_NOTES_v0.1.6.md) | **Current** release notes (index status + unlimited maxScan) |
+| [RELEASE_NOTES_v0.1.5.md](./RELEASE_NOTES_v0.1.5.md) | Prior (context menu + e2e coverage) |
 | [RELEASE_NOTES_v0.1.4.md](./RELEASE_NOTES_v0.1.4.md) | Prior (docs + CI + first signed pack) |
 | [RELEASE_NOTES_v0.1.3.md](./RELEASE_NOTES_v0.1.3.md) | Prior notes (0.1.1–0.1.3) |
 | [index-tracks.md](./index-tracks.md) | UI / Perf dual-track indexing |
@@ -14,5 +15,7 @@
 | [research-volume-scan-diff.md](./research-volume-scan-diff.md) | Cold scan vs hydrate+diff research |
 | [SPEC-perf-baseline.md](./SPEC-perf-baseline.md) | Perf harness contract |
 | [perf-ledger.md](./perf-ledger.md) | Optimization ledger (keep / measure) |
+| [tex/aurora-index-search.pdf](./tex/aurora-index-search.pdf) | **Index & search tech report** (LaTeX/PDF；算法伪代码 + 性能表) |
+| [tex/aurora-index-search.tex](./tex/aurora-index-search.tex) | Source；WSL：`cd docs/tex && ./build.sh`（xelatex ×2） |
 
 Product overview and scripts: root [`README.md`](../README.md).

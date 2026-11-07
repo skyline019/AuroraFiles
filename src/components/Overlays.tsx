@@ -749,15 +749,21 @@ export function ShortcutsHelp() {
 // ═══════════════════ 索引状态面板 ═══════════════════
 const DEMO_PREFS_KEY = 'aurora-index-prefs';
 
+function clampPrefsMaxScan(raw: unknown): number {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return 0; // 0 = 无上限
+  return Math.min(50_000_000, Math.max(5_000, Math.round(n)));
+}
+
 function readDemoPrefs(): { maxScan: number; excludeNames: string[] } {
   try {
     const j = JSON.parse(localStorage.getItem(DEMO_PREFS_KEY) || '{}');
     return {
-      maxScan: Math.min(50_000_000, Math.max(5_000, Number(j.maxScan) || 2_000_000)),
+      maxScan: clampPrefsMaxScan(j.maxScan ?? 0),
       excludeNames: Array.isArray(j.excludeNames) ? j.excludeNames.map(String) : [],
     };
   } catch {
-    return { maxScan: 2_000_000, excludeNames: [] };
+    return { maxScan: 0, excludeNames: [] };
   }
 }
 
@@ -783,7 +789,7 @@ export function IndexPanel() {
     usn?: { journalId?: string; nextUsn?: number } | null;
   } | null>(null);
   const [busy, setBusy] = useState(false);
-  const [maxScanDraft, setMaxScanDraft] = useState('2000000');
+  const [maxScanDraft, setMaxScanDraft] = useState('0');
   const [excludeDraft, setExcludeDraft] = useState('');
   const [trackDraft, setTrackDraft] = useState<'ui' | 'perf'>('ui');
   const [prefsDirty, setPrefsDirty] = useState(false);
@@ -823,9 +829,7 @@ export function IndexPanel() {
 
   const savePrefs = async () => {
     const parsed = parseInt(maxScanDraft, 10);
-    const maxScan = Number.isFinite(parsed) && parsed <= 0
-      ? 50_000_000
-      : Math.min(50_000_000, Math.max(5_000, parsed || 2_000_000));
+    const maxScan = clampPrefsMaxScan(Number.isFinite(parsed) ? parsed : 0);
     const excludeNames = excludeDraft.split(/[\n,;]+/).map((x) => x.trim()).filter(Boolean);
     setBusy(true);
     try {
@@ -856,12 +860,11 @@ export function IndexPanel() {
     setBusy(true);
     try {
       const parsed = parseInt(maxScanDraft, 10);
-      const maxScan = Number.isFinite(parsed) && parsed <= 0
-        ? 50_000_000
-        : Math.min(50_000_000, Math.max(5_000, parsed || 2_000_000));
+      const maxScan = clampPrefsMaxScan(Number.isFinite(parsed) ? parsed : 0);
       await api().ensureIndex(s.indexRoot, {
         maxDepth: 64,
-        maxScan,
+        // 0 = 无上限；主进程 resolveScanLimit 处理
+        ...(maxScan > 0 ? { maxScan } : { maxScan: 0 }),
         rebuild: true,
         track: trackDraft,
       });
@@ -1001,7 +1004,7 @@ export function IndexPanel() {
               onChange={(e) => { setMaxScanDraft(e.target.value); setPrefsDirty(true); }}
               className="mt-1 w-full rounded-lg border border-black/[.08] bg-white px-2.5 py-1.5 text-[13px] tabular text-zinc-800 outline-none focus-visible:ring-2 focus-visible:ring-[#0a84ff] dark:border-white/[.12] dark:bg-[#1f1f22] dark:text-zinc-100"
             />
-            <span className="mt-0.5 block text-[11px] font-normal text-zinc-400">默认 200 万；填 0 视为不截断（上限 5000 万）。过大仅略增首建索时间</span>
+            <span className="mt-0.5 block text-[11px] font-normal text-zinc-400">默认 0 = 无上限。填正数则夹到 5 千～5000 万；过大只影响首建索时间</span>
           </label>
           <label className="block text-[12px] font-medium text-zinc-600 dark:text-zinc-300">
             额外排除目录名（每行一个）
@@ -1089,7 +1092,7 @@ export function IndexPanel() {
         )}
 
         <p className="mt-3 text-[11px] leading-relaxed text-zinc-400">
-          深度搜索优先走内存/FTS。修改扫描上限后请点「重建索引」生效；填 0 可尽量扫完全卷。
+          深度搜索优先走内存/FTS。修改扫描上限后请点「重建索引」生效；默认 0 为无上限。
         </p>
       </motion.div>
     </motion.div>

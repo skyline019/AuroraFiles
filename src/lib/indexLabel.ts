@@ -44,6 +44,7 @@ export function indexStatusLabel(info: {
   building?: boolean;
   refreshing?: boolean;
   size?: number;
+  scanned?: number;
   source?: string;
   watching?: boolean;
   usnReadable?: boolean | null;
@@ -64,7 +65,8 @@ export function indexStatusLabel(info: {
     return parts.join(' · ');
   }
   if (info.building) {
-    const n = info.size ?? 0;
+    // native 冷扫早期 size 可能仍为 0，回退 scanned，避免永远「正在建立索引…」
+    const n = Math.max(info.size ?? 0, info.scanned ?? 0);
     return n > 0 ? `索引中 · ${n.toLocaleString()} 项` : '正在建立索引…';
   }
   if (info.refreshing) return '索引同步中…';

@@ -26,27 +26,28 @@ describe('indexPrefs', () => {
     await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined);
   });
 
-  it('clamps maxScan', () => {
+  it('clamps maxScan (0 = unlimited)', async () => {
+    const { resolveScanLimit, UNLIMITED_SCAN } = await import('./indexPrefs.mjs');
     expect(clampMaxScan(100)).toBe(5_000);
     expect(clampMaxScan(9e9)).toBe(50_000_000);
-    expect(clampMaxScan(0)).toBe(50_000_000);
-    expect(clampMaxScan(-1)).toBe(50_000_000);
+    expect(clampMaxScan(0)).toBe(0);
+    expect(clampMaxScan(-1)).toBe(0);
     expect(clampMaxScan(80_000)).toBe(80_000);
     expect(clampMaxScan(2_000_000)).toBe(2_000_000);
+    expect(resolveScanLimit(0)).toBe(UNLIMITED_SCAN);
+    expect(resolveScanLimit(60_000)).toBe(60_000);
   });
 
-  it('migrates legacy default 120000 → 2M', async () => {
-    await saveIndexPrefs({ maxScan: 120_000, excludeNames: [] });
-    // Bypass cache as if cold load
-    resetIndexPrefsCache();
-    // save wrote 120k clamped; re-save raw file to simulate old prefs
+  it('migrates legacy defaults 120000 / 2M → unlimited (0)', async () => {
     const fs = await import('node:fs/promises');
     const { getIndexDir } = await import('./persist.mjs');
     const p = path.join(getIndexDir(), 'index-prefs.json');
     await fs.writeFile(p, JSON.stringify({ maxScan: 120000, excludeNames: [] }), 'utf8');
     resetIndexPrefsCache();
-    const loaded = await loadIndexPrefs();
-    expect(loaded.maxScan).toBe(2_000_000);
+    expect((await loadIndexPrefs()).maxScan).toBe(0);
+    await fs.writeFile(p, JSON.stringify({ maxScan: 2_000_000, excludeNames: [] }), 'utf8');
+    resetIndexPrefsCache();
+    expect((await loadIndexPrefs()).maxScan).toBe(0);
   });
 
   it('persists maxScan and exclude names', async () => {

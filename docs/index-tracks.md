@@ -32,8 +32,8 @@ IPC `fs:ensureIndex` / `ensureIndexes` 默认塞 `track: 'ui'`；压测脚本应
 
 ## Prefs & UI
 
-- `index-prefs.json`：`maxScan`（默认 **2_000_000**，硬顶 **50_000_000**，填 `0` ≈ 不截断）、`excludeNames`、`indexTrack`
-- 旧默认 `120000` 加载时自动迁移到 `2_000_000`
+- `index-prefs.json`：`maxScan`（默认 **0 = 无上限**；正数夹到 5k–50M）、`excludeNames`、`indexTrack`
+- 旧默认 `120000` / `2000000` 加载时自动迁移到 `0`
 - 索引面板：「建索轨」单选 + 重建时带上当前轨
 
 ## Status

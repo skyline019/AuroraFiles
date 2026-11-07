@@ -1,0 +1,640 @@
+% !TeX program = xelatex
+% Aurora Files — Index & Search Technical Report
+% Compile (WSL): cd docs/tex && xelatex -interaction=nonstopmode aurora-index-search.tex && xelatex -interaction=nonstopmode aurora-index-search.tex
+\documentclass[UTF8,a4paper,11pt]{ctexart}
+
+\usepackage{geometry}
+\geometry{margin=2.2cm}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{tabularx}
+\usepackage{multirow}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{amsmath,amssymb}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,fit,calc}
+\usepackage[ruled,vlined,linesnumbered,algosection]{algorithm2e}
+\usepackage{listings}
+\usepackage{caption}
+\usepackage{fancyhdr}
+\usepackage{enumitem}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=black!70!blue,
+  urlcolor=black!60!teal,
+  citecolor=black!70!blue
+}
+
+\setCJKmainfont{Noto Serif CJK SC}
+\setCJKsansfont{Noto Sans CJK SC}
+\setCJKmonofont{Noto Sans Mono CJK SC}
+
+\SetKwInput{KwIn}{输入}
+\SetKwInput{KwOut}{输出}
+\SetKwComment{Comment}{$\triangleright$\ }{}
+\SetAlgoNlRelativeSize{0}
+\renewcommand{\algorithmcfname}{算法}
+
+\lstset{
+  basicstyle=\ttfamily\footnotesize,
+  breaklines=true,
+  frame=single,
+  columns=fullflexible,
+  keepspaces=true,
+  showstringspaces=false
+}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small Aurora Files · 索引与搜索技术说明}
+\fancyhead[R]{\small v0.1.5}
+\fancyfoot[C]{\thepage}
+
+\title{\textbf{Aurora Files}\\[0.35em]
+\large 索引与搜索核心技术说明\\[0.2em]
+\normalsize（算法 · 伪代码 · 性能数据）}
+\author{skylinezhanghan-wq · 个人非商用项目}
+\date{2026-11-07 \\ 对应发布：v0.1.5 · 基准卷 $E{:}\backslash$（约 $1.10\times 10^{6}$ 条目）}
+
+\begin{document}
+\maketitle
+\begin{abstract}
+本文档面向 Aurora Files（Windows x64，Electron + React）的\textbf{卷级索引}与\textbf{可取消深搜}子系统，给出架构分解、核心算法的详细伪代码，以及同机实测性能表。重点覆盖：（1）UI/Perf 建索双轨；（2）WalkEngine 引擎链 $mft\to rust\to js$；（3）并行 Dirent BFS 与 IndexDebt 错峰清偿；（4）常驻进程 \texttt{aurora-indexd} 的父链紧凑存储、查询与空间债规范化；（5）hydrate-first 二次打开与 USN/脏目录增量；（6）搜索管线（内存/indexd/FTS5/walk 回退）与前端排序。性能数据摘自仓库 \texttt{docs/perf-ledger.md}、\texttt{docs/indexd-resident.md}、\texttt{docs/bakeoff-engine.md}（日期 2026-11-06/07）。
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+%==============================================================================
+\section{问题定义与目标}
+%==============================================================================
+
+\subsection{产品约束}
+Aurora Files 需要在 Windows 上对\textbf{真实磁盘}（非演示沙盒）提供：
+\begin{itemize}[leftmargin=1.6em]
+  \item 四视图浏览时界面可交互（建索不得饿死主进程）；
+  \item 卷级名称/路径检索，热查询 ideally $\le 40\,\mathrm{ms}$；
+  \item 二次打开接近「秒级可搜」（hydrate-first，而非每次冷扫百万）；
+  \item 可选特权路径下利用 NTFS MFT/USN 加速枚举与增量。
+\end{itemize}
+
+\subsection{非目标}
+不在本文档展开：UI 虚拟化、预览/ffmpeg、安装签名。不承诺「首次冷扫秒完百万」——产品口径将\textbf{秒级}定义为二次打开的 hydrate + 增量追赶。
+
+\subsection{符号}
+\begin{tabular}{@{}ll@{}}
+\toprule
+符号 & 含义 \\
+\midrule
+$V$ & 卷根，如 \texttt{E:\textbackslash} \\
+$N$ & 索引条目数（约 $1.1\times 10^6$） \\
+T1 & 首次可搜时刻（searchable） \\
+T2 & T1 之后债清偿（如 FTS）收尾段 \\
+RSS & 常驻集大小（进程内存） \\
+FRN & NTFS File Reference Number \\
+\bottomrule
+\end{tabular}
+
+%==============================================================================
+\section{总体架构}
+%==============================================================================
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  node distance=7mm and 10mm,
+  box/.style={draw, rounded corners=2pt, align=center, font=\small, inner sep=5pt},
+  arr/.style={-{Latex}, thick}
+]
+  \node[box, fill=blue!8] (ui) {Electron UI\\Zustand / IPC};
+  \node[box, fill=green!10, below=of ui] (orch) {Node 编排\\\texttt{fsIndex.ensureIndexed}};
+  \node[box, fill=orange!12, below left=8mm and 2mm of orch] (we) {WalkEngine\\$mft\to rust\to js$};
+  \node[box, fill=purple!10, below right=8mm and 2mm of orch] (idx) {aurora-indexd\\父链 arena};
+  \node[box, fill=yellow!15, below=of we] (fts) {SQLite FTS5\\侧车 + IndexDebt};
+  \node[box, fill=gray!12, below=of idx] (disk) {持久化\\.aidx / NDJSON};
+  \draw[arr] (ui) -- (orch);
+  \draw[arr] (orch) -- (we);
+  \draw[arr] (orch) -- (idx);
+  \draw[arr] (we) -- node[left,font=\scriptsize]{upsert 流} (idx);
+  \draw[arr] (orch) -- (fts);
+  \draw[arr] (idx) -- (disk);
+  \draw[arr] (idx) -- node[right,font=\scriptsize]{export\_slice} (fts);
+\end{tikzpicture}
+\caption{索引栈：UI $\to$ Node 编排 $\to$ WalkEngine 流式 upsert $\to$ indexd；FTS 为侧车债。}
+\end{figure}
+
+权威实现入口：
+\begin{itemize}[leftmargin=1.6em]
+  \item 编排：\texttt{electron/index/fsIndex.mjs}
+  \item 遍历：\texttt{electron/index/fastWalk.mjs}、WalkEngine、\texttt{native/}
+  \item 查询：\texttt{electron/index/searchFiles.mjs}、indexd \texttt{query}
+  \item 债：\texttt{electron/index/indexDebt.mjs}
+  \item 轨：\texttt{electron/index/indexTrack.mjs}
+\end{itemize}
+
+当 \texttt{AURORA\_INDEX\_BACKEND=native}（或缺省且卷根 + 二进制存在）时，$N$ 百万级条目\textbf{不}驻留 V8 \texttt{meta}；Node 仅编排。JS 后端则 \texttt{VolumeIndex.meta} 持全量。
+
+%==============================================================================
+\section{建索双轨：UI 与 Perf}
+%==============================================================================
+
+\subsection{动机}
+高并发 walk + 同步还 FTS 债会饿死 Electron 主进程，导致进夹/拖动卡顿；压测又需要另一套高吞吐旋钮。二者\textbf{完全分轨}，默认互不掺和。
+
+\subsection{参数对照}
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+参数 & UI（默认） & Perf \\
+\midrule
+目标 & 建索时界面可操作 & 冲吞吐 / bakeoff \\
+\texttt{maxPerf} & false & true \\
+并发 & $\approx\min(12,\mathrm{cpus})$ & 可达 $32$–$128$ \\
+\texttt{yieldEvery} & $512$ & $8192$ \\
+walk 中 FTS 涓流 & \textbf{关} & \textbf{开} \\
+债清偿节奏 & 疏（$\sim 40\,\mathrm{ms}$） & 密 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{解析顺序}
+\begin{enumerate}[leftmargin=1.6em]
+  \item \texttt{opts.maxPerf === true} $\Rightarrow$ perf
+  \item \texttt{opts.track} / \texttt{opts.indexTrack}
+  \item 环境变量 \texttt{AURORA\_INDEX\_TRACK}
+  \item 持久化 prefs \texttt{indexTrack}
+  \item 缺省 \textbf{ui}
+\end{enumerate}
+桌面 IPC \texttt{fs:ensureIndex} 默认塞 \texttt{track:'ui'}；体积压测应显式 \texttt{track:'perf'}。
+
+%==============================================================================
+\section{建索主流程 \texttt{ensureIndexed}}
+%==============================================================================
+
+\begin{algorithm}[htbp]
+\caption{ensureIndexed$(V, opts)$ — 可搜优先}
+\KwIn{卷根 $V$，选项（rebuild / hydrateFirst / track / lean \ldots）}
+\KwOut{VolumeIndex 状态（ready / source / debt）}
+$opts \leftarrow \mathrm{applyIndexTrack}(opts)$\;
+$idx \leftarrow \mathrm{getIndex}(V)$\;
+\If{$idx.\mathrm{ready} \land \neg rebuild \land \neg refresh$}{
+  $\mathrm{attachLiveFollowers}(V)$\;
+  \Return $idx$\;
+}
+\If{$refresh \land idx.\mathrm{ready}$}{\Return $\mathrm{softRefresh}(V)$\;}
+$idx.\mathrm{building} \leftarrow true$\;
+\BlankLine
+\Comment{尝试盘缓存 hydrate}
+\If{$\neg rebuild \land \mathrm{wantNative} \land \mathrm{diskCacheExists}$}{
+  $\mathrm{hydrateNativeFromDisk}(idx)$ \Comment{.aidx / NDJSON}\;
+  $hydrated \leftarrow true$\;
+}
+\ElseIf{$\neg rebuild \land \mathrm{JS\ disk\ entries}$}{
+  $idx.\mathrm{hydrate}(entries)$\;
+  $hydrated \leftarrow true$\;
+}
+\BlankLine
+$decision \leftarrow \mathrm{usnNeedsRebuild}(idx.usn, \mathrm{liveUsn})$\;
+\If{$rebuild \lor decision.rebuild$}{
+  $idx.\mathrm{clear}$\; $hydrated \leftarrow false$\; $mode \leftarrow \mathrm{full}$\;
+}
+\ElseIf{$hydrated \land \mathrm{hydrateFirst}$}{
+  $idx.\mathrm{source} \leftarrow \texttt{disk-hydrate-first}$\;
+  $idx.\mathrm{building} \leftarrow false$\;
+  异步 $\mathrm{softRefresh}(V)$\; \Comment{不挡可搜}
+  调度 space 债切片\;
+  \Return $idx$\;
+}
+\BlankLine
+\Comment{冷扫 / mtime-delta}
+$\mathrm{WalkEngine.stream}(V) \xrightarrow{\mathrm{upsert}} idx$\;
+记债：fts / frn / persist / space（lean 时）\;
+$idx.\mathrm{ready} \leftarrow true$ \Comment{T1}\;
+错峰 $\mathrm{paySlice}$ 直至债清或后台\;
+$\mathrm{persist}$（可异步）\;
+\Return $idx$\;
+\end{algorithm}
+
+\textbf{关键产品决策}：二次打开走 hydrate-first——T1 可为数十毫秒级「盘缓存可搜」，增量与债后台完成。
+
+%==============================================================================
+\section{WalkEngine 与三种枚举引擎}
+%==============================================================================
+
+\subsection{优先级}
+\[
+\mathrm{priority} =
+\begin{cases}
+[mft, rust, js] & \text{Admin + SeBackup 且 bakeoff adopt} \\
+[rust, js] & \text{无特权或缺省}
+\end{cases}
+\]
+静默降级：\texttt{mft\_no\_priv} $\to$ rust $\to$ js，不崩溃。
+
+\subsection{Bakeoff 同机结果（$E{:}\backslash$，约 $1.10\,\mathrm{M}$）}
+
+\subsubsection*{非特权}
+\begin{center}
+\begin{tabular}{@{}llrrr@{}}
+\toprule
+引擎 & 模式 & 条目 & ms & 条目/s \\
+\midrule
+JS & store & $1.098\,\mathrm{M}$ & $8342$ & $1.32\times 10^5$ \\
+Rust & store & $1.099\,\mathrm{M}$ & $5395$ & $2.04\times 10^5$ \\
+C++ MFT & — & — & — & \texttt{skipped\_no\_priv} \\
+\bottomrule
+\end{tabular}
+\end{center}
+Rust store RSS $\approx 15\,\mathrm{MB}$，JS store $\approx 311\,\mathrm{MB}$（约 $0.05\times$ 内存、$1.56\times$ 吞吐）$\Rightarrow$ \textbf{rust adopt}。
+
+\subsubsection*{特权（Admin）}
+\begin{center}
+\begin{tabular}{@{}llrrr@{}}
+\toprule
+引擎 & 模式 & 条目 & ms & 条目/s \\
+\midrule
+C++ MFT & store & $1.098\,\mathrm{M}$ & $5602$ & $1.96\times 10^5$ \\
+Rust & store & $1.116\,\mathrm{M}$ & $14051$ & $7.94\times 10^4$ \\
+JS & store & $1.100\,\mathrm{M}$ & $20146$ & $5.46\times 10^4$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+MFT 经 FRN 48-bit 掩码、根 FRN$=5$、父路径 memo 后 \textbf{adopt}；e2e 上 MFT$\to$indexd 直通后 T1 曾优于纯 rust 路径（见第~\ref{sec:perf-indexd}~节）。
+
+\begin{algorithm}[htbp]
+\caption{WalkEngine.SelectAndStream$(V)$}
+\KwIn{卷 $V$，环境 \texttt{AURORA\_WALK\_ENGINE}}
+\KwOut{条目流 $\{(\mathrm{path},\mathrm{name},\mathrm{kind},\mathrm{frn}?)\}$}
+$P \leftarrow$ 解析优先级列表\;
+\For{$e \in P$}{
+  \If{$e=\mathrm{mft}$}{
+    启动 \texttt{aurora-mft-enum}（\texttt{FSCTL\_ENUM\_USN\_DATA}）\;
+    \If{无特权或失败}{\textbf{continue}\;}
+    流式 NDJSON / \texttt{stream-nodes}（可仅 FRN+name+parent）\;
+    \Return\;
+  }
+  \If{$e=\mathrm{rust}$}{
+    启动 \texttt{aurora-walk-bench} 子进程，Dirent 流式 upsert\;
+    \If{成功}{\Return\;}
+  }
+  \If{$e=\mathrm{js}$}{
+    $\mathrm{parallelDirentWalk}(V)$\;
+    \Return\;
+  }
+}
+\end{algorithm}
+
+%==============================================================================
+\section{并行 Dirent BFS（JS 引擎）}
+\label{sec:bfs}
+%==============================================================================
+
+实现：\texttt{parallelDirentWalk}（\texttt{fastWalk.mjs}）。
+
+\subsection{设计要点}
+\begin{itemize}[leftmargin=1.6em]
+  \item 并行 BFS；队列用 \textbf{头指针} $qHead$ 避免 \texttt{Array.shift} 的 $O(n)$；
+  \item Dirent 优先，文件省略 \texttt{kind}（缺省=file）压对象字段；
+  \item \texttt{seenDirs} 防环；可选跟随 reparse + \texttt{realpath} 去重；
+  \item UI/Perf 控制 $concurrency$ 与 $yieldEvery$。
+\end{itemize}
+
+\begin{algorithm}[htbp]
+\caption{parallelDirentWalk$(root, opts)$}
+\KwIn{根路径，$maxScan$，$maxDepth$，并发度 $C$，跳过谓词 $skip$}
+\KwOut{经 $onEntry$ 回调的条目；$scanned$}
+$queue \leftarrow [(root,0)]$\; $qHead \leftarrow 0$\;
+$seen \leftarrow \{root.\mathrm{lower}\}$\; $scanned \leftarrow 0$\;
+\While{$\neg stop()$}{
+  \While{$inFlight < C \land queueLen()>0$}{
+    $(dir,depth) \leftarrow queue[qHead++]$\;
+    异步：$ents \leftarrow \mathrm{readdir}(dir,\{\mathrm{withFileTypes}\})$\;
+    \For{$ent \in ents$}{
+      \If{$skip(ent.name) \lor \mathrm{symlink}$}{\textbf{continue}\;}
+      $full \leftarrow \mathrm{joinLogical}(dir, name)$\;
+      $scanned \leftarrow scanned+1$\;
+      $onEntry(\mathrm{entryFromDirent}(full,name,ent))$\;
+      \If{$ent.\mathrm{isDirectory}() \land depth < maxDepth$}{
+        \If{$full.\mathrm{lower} \notin seen$}{
+          $seen.\mathrm{add}(full.\mathrm{lower})$\;
+          $queue.\mathrm{push}((full, depth+1))$\;
+        }
+      }
+      \If{$scanned \bmod yieldEvery = 0$}{\textbf{await} $\mathrm{setImmediate}$\;}
+    }
+    $inFlight \leftarrow inFlight-1$\; 唤醒等待者\;
+  }
+  \If{$inFlight=0 \land queueLen()=0$}{\textbf{break}\;}
+  \textbf{await} 有完成事件\;
+}
+\end{algorithm}
+
+历史优化：同栈从「顺序 lstat + 同步 FTS」到「并行 Dirent + 批量 ingest + 延后二级索引」后，$E{:}\backslash$ 约从 $38\mathrm{k}/300\mathrm{s}$（$\sim 128/\mathrm{s}$）到 $1.10\mathrm{M}/42\mathrm{s}$（$\sim 2.6\times 10^4/\mathrm{s}$）。
+
+%==============================================================================
+\section{IndexDebt：记债与错峰清偿}
+%==============================================================================
+
+热路径只做「可搜最小集」，重活记债后按时间片偿还。
+
+\subsection{优先级（数字越小越先）}
+\begin{center}
+\begin{tabular}{@{}cll@{}}
+\toprule
+优先级 & 种类 & 含义 \\
+\midrule
+0 & \texttt{fts} & SQLite FTS5 侧车写入 \\
+1 & \texttt{frn} & FRN 懒补（服务 USN） \\
+2 & \texttt{secondary}/\texttt{persist} & 二级结构 / 落盘 \\
+3 & \texttt{space} & indexd 空间规范化 \\
+4 & \texttt{stat\_meta} & 元数据补齐 \\
+\bottomrule
+\end{tabular}
+\end{center}
+\texttt{space} \textbf{不}阻挡可搜与落盘。
+
+\begin{algorithm}[htbp]
+\caption{IndexDebt.paySlice$(budget)$}
+\KwIn{时间预算 $ms$，操作预算 $ops$}
+\KwOut{$(paid, kind)$}
+\If{$paused \lor paying \lor payer=\bot$}{\Return $(0,\bot)$\;}
+$ordered \leftarrow$ 已欠债种类按 PRIORITY 升序\;
+\If{$ordered=\emptyset$}{\Return $(0,\bot)$\;}
+$kind \leftarrow ordered[0]$\;
+$n \leftarrow payer(kind, \{ms,ops\})$\;
+累计 $paid$；若该类完成则 \texttt{clear}\;
+\Return $(n, kind)$\;
+\end{algorithm}
+
+\subsection{谷期涓流 FTS（Perf 轨）}
+冷扫速率非匀速：峰可达 $\sim 10^5/\mathrm{s}$，谷可降至 $\sim 2\times 10^4/\mathrm{s}$（差约 $5\times$）。Perf 轨在瞬时速率低于阈值（如 $<5\times 10^4/\mathrm{s}$）时小批量 \texttt{INSERT}，缩短 T2 且尽量不拉长 T1。实测修复空 meta 误清债后，T1 可消化约 $13\%$ FTS（$\sim 14$ 万条）而 T1 几乎不变（$\sim 24.7\,\mathrm{s}$ vs $\sim 24.5\,\mathrm{s}$）。
+
+%==============================================================================
+\section{aurora-indexd：父链存储与查询}
+\label{sec:indexd}
+%==============================================================================
+
+\subsection{存储模型（v2）}
+\begin{itemize}[leftmargin=1.6em]
+  \item \textbf{Arena}：唯一名称分量字节池；
+  \item \textbf{Entry}：$\{parent, name\_off, flags, frn, path\_hash\}$；
+  \item 路径按需 \texttt{build\_path} 沿父链拼回；
+  \item 快照 \texttt{.aidx}（magic \texttt{AIDX} v2）；增量 \texttt{.aidx.d}；
+  \item FRN：稠密表 + overflow；MFT 路径用 \texttt{upsert\_node} 延迟父链接（\texttt{barrier}/\texttt{seal}）。
+\end{itemize}
+
+\subsection{路径 Upsert}
+\begin{algorithm}[htbp]
+\caption{indexd.upsert$(path, name, is\_dir, frn)$}
+$path_{lc} \leftarrow \mathrm{lower}(path)$；$comps \leftarrow \mathrm{split}(path_{lc})$\;
+校正叶名与 $name$ 一致\;
+$\mathrm{ensure\_components}(comps, is\_dir, frn)$：逐级 intern 名、分配/复用 entry、挂 parent、更新 path 槽与 FRN\;
+标记 $name\_index\_dirty$\;
+\end{algorithm}
+
+\subsection{MFT 节点 Upsert（无全路径）}
+\begin{algorithm}[htbp]
+\caption{indexd.upsert\_node$(name, frn, parent\_frn, is\_dir)$}
+\KwIn{名称与 FRN 三元组}
+\If{$frn=0 \lor name=\varepsilon$}{\Return\;}
+冷启动首次 persist 前：$push\_bytes$（跳过 name\_intern 哈希，省 RSS）\;
+\eIf{$\exists id=\mathrm{frn\_get}(frn)$}{
+  更新 name/flags；登记 $pending\_parent[id]\leftarrow parent\_frn$\;
+}{
+  分配新 entry；同上挂 pending\;
+}
+$path\_index\_ready \leftarrow false$\; 脏名索引\;
+\end{algorithm}
+\texttt{seal}/\texttt{barrier} 时根据 FRN 解析 parent 指针，避免 walk 时物化百万全路径字符串。
+
+\subsection{查询}
+多词 AND：主词走名称索引（前缀或 contains），其余在 $\mathrm{name}+\mathrm{path}$ 上过滤；无需 FTS。短词（$\le 4$）或多词强制 contains 扫描，避免错误前缀切断。
+
+\begin{algorithm}[htbp]
+\caption{indexd.query$(q, limit, mode)$}
+\KwOut{至多 $limit$ 条 EntryView}
+$\mathrm{seal}()$\;
+$tokens \leftarrow \mathrm{split}(\mathrm{lower}(q))$\;
+$primary \leftarrow tokens[0]$；$rest \leftarrow tokens[1:]$\;
+\eIf{$mode=\texttt{contains} \lor |tokens|>1 \lor |primary|\le 4$}{
+  \For{$id \in name\_index$（不整表克隆）}{
+    \If{$\mathrm{live} \land primary \subseteq name(id) \land \mathrm{matches\_rest}(view, rest)$}{
+      输出；满则返回\;
+    }
+  }
+}{
+  $start \leftarrow \mathrm{partition\_point}(name\_index,\ \mathrm{name}<primary)$\;
+  \For{$id \in name\_index[start:]$}{
+    \If{$\neg \mathrm{name}.\mathrm{starts\_with}(primary)$}{\textbf{break}\;}
+    过滤 $rest$；收集至 $limit$\;
+  }
+}
+\end{algorithm}
+
+\subsection{空间债 \texttt{normalize\_slice}}
+相位机：
+\begin{enumerate}[leftmargin=1.6em]
+  \item \texttt{path}：批填 $path\_hash$ + open-addressing \texttt{path\_slots}；
+  \item \texttt{shrink}：收缩 intern/FRN 等；
+  \item \texttt{arena}：至多一次 \texttt{compact\_arena\_entries}，然后可能回到 path；
+  \item \texttt{done}：复位。
+\end{enumerate}
+\texttt{.aidx.d} 超过阈值（默认 $8\,\mathrm{MB}$）时 coalesce 为全量 \texttt{persist\_bin}。
+
+%==============================================================================
+\section{搜索管线}
+%==============================================================================
+
+\subsection{端到端}
+\begin{algorithm}[htbp]
+\caption{searchFiles$(root, query, opts)$}
+$q \leftarrow \mathrm{lower}(\mathrm{trim}(query))$\;
+\If{$q=\varepsilon$}{\Return 空\;}
+$jobId \leftarrow ++globalSearchJob$\; \Comment{取消令牌}
+异步 $\mathrm{ensureIndexed}$（不阻塞过久）\;
+$indexed \leftarrow \mathrm{queryIndex}(root, q)$\;
+\If{已取消}{\Return cancelled\;}
+\If{$indexed$ 有命中或 source 以 \texttt{index} 开头}{\Return $indexed$\;}
+\BlankLine
+\Comment{回退：浅层可取消 walk}
+受限 $maxDepth\le 6,\ maxScan\le 5\times 10^4$\;
+DFS/BFS 扫描；名包含 $q$ 则收集\;
+\Return $\{items, source=\texttt{walk-fallback}\}$\;
+\end{algorithm}
+
+\texttt{queryIndex}：若未 ready 且扫描极少，先 \texttt{warmShallow}；否则调用 $idx.query$（JS meta / FTS / indexd）。
+
+\subsection{FTS5 侧车}
+表：\texttt{files(path UNINDEXED, name)}，\texttt{unicode61} 分词；WAL；流式 \texttt{beginRebuild/insertFast/endRebuild} 避免全量数组尖峰。查询：
+\[
+\texttt{SELECT path, name FROM files WHERE files MATCH ? LIMIT ?}
+\]
+Native 默认可跳过 FTS（indexd 多词足够）；\texttt{AURORA\_INDEXD\_FTS=1} 时启用。
+
+\subsection{前端排序 \texttt{scoreMatch}}
+\begin{align*}
+s &=
+\begin{cases}
+1000 & name = q \\
+500 & name.\mathrm{startsWith}(q) \\
+200 & q \subseteq name \\
+80 & q \subseteq path \\
+0 & \text{否则（丢弃）}
+\end{cases}
+\\
+&\quad +\, [5\ \text{if file}] + \max(0, 40-|name|)
+\end{align*}
+再按分数降序、\texttt{zh-CN} 名比较截断。支持 \texttt{tag:} / \texttt{type:} 前缀解析。
+
+%==============================================================================
+\section{增量：USN 与 softRefresh}
+%==============================================================================
+
+\begin{itemize}[leftmargin=1.6em]
+  \item 冷扫 lean 不 \texttt{stat} $\Rightarrow$ FRN 稀疏；用 \texttt{debt.frn} 懒补，禁止为 FRN 全量阻塞 T1。
+  \item \texttt{softRefresh} $=$ ReadUsn(FRN) + 脏目录重扫；无特权时脏目录路径仍正确。
+  \item 小树基准（\texttt{test:perf-diff}，$K=100$）：index $\sim 129\,\mathrm{ms}$，refresh $\sim 839\,\mathrm{ms}$（脏路径）；有 USN 权限后目标 p95$<50\,\mathrm{ms}$。
+\end{itemize}
+
+%==============================================================================
+\section{性能数据汇总}
+\label{sec:perf-indexd}
+%==============================================================================
+
+除非另注，体积 $\approx E{:}\backslash$、$N\approx 1.10\times 10^6$，日期 2026-11-06/07。
+
+\subsection{JS lean 栈演进（Node 内 meta）}
+\begin{center}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+阶段 & T1 & 峰 RSS & 热搜 \\
+\midrule
+早期并行 + 同步 FTS 思路 & $\sim 42\,\mathrm{s}$ 量级 & $\sim 2.8\,\mathrm{GB}$ 封口 & $\sim 32\,\mathrm{ms}$ \\
+lean + IndexDebt & $\sim 24\,\mathrm{s}$ & $\sim 755\,\mathrm{MB}$ & $\sim 20\,\mathrm{ms}$ \\
+maxPerf 极限 & $10.2\,\mathrm{s}$ & — & $21\,\mathrm{ms}$ \\
+空间极限（弃 byName 等） & $9.1\,\mathrm{s}$ / $494\,\mathrm{MB}$ & 搜后 $\sim 370\,\mathrm{MB}$ & $28\,\mathrm{ms}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{indexd 常驻演进}
+\begin{center}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+阶段 & T1 & Node RSS & indexd RSS \\
+\midrule
+First native & $12\,\mathrm{s}$ & $252$ & $425$ \\
+去重键 / 直通 NDJSON & $8.9\,\mathrm{s}$ & $113$ & $170$ \\
+父链 + \texttt{.aidx} & $9.4\,\mathrm{s}$ & $49$ & $92$ \\
+MFT FRN 直通 & $7.3\,\mathrm{s}$ & $50$ & $126$ \\
+dense FRN + 快 aidx & $\sim 11\,\mathrm{s}$ & $\sim 107$ & $62$ \\
+延迟 path\_hash & $4.4\,\mathrm{s}$ & $105$ & $62$ \\
+space + normalize & $4.3\,\mathrm{s}$ & — & $96$（path on） \\
+\textbf{path\_slots + 无 MFT intern} & $\mathbf{6.2\,\mathrm{s}}$ & $\mathbf{82}$ & $\mathbf{69}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+最新门槛（elevated MFT，run \texttt{indexd-2026-11-07T02-46-48}）：
+\begin{center}
+\begin{tabular}{@{}lrl@{}}
+\toprule
+指标 & 实测 & 门槛 \\
+\midrule
+T1 searchable & $6.2\,\mathrm{s}$ & — \\
+space\_cleared & $2.6\,\mathrm{s}$（异步） & 不计入 T1 \\
+persist & $101\,\mathrm{ms}$ & — \\
+Node RSS & $82\,\mathrm{MB}$ & $\le 90$ / 产品 $\le 150$ \\
+indexd RSS（path ready） & $69\,\mathrm{MB}$ & $\le 90$ / 产品 $\le 100$ \\
+冷 / 热搜 & $4.2$ / $0\,\mathrm{ms}$ & 热 $\le 40$ \\
+path\_index\_ready & true & 要求 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+完整评估复跑（$\times 3$）：T1 $6.2$–$7.1\,\mathrm{s}$，Node $77$–$79$，indexd $68$–$70$，冷搜 $3$–$8\,\mathrm{ms}$，热搜 $0$，bakeoff mft/rust adopt，warn$=[]$。
+
+\subsection{Hydrate-first}
+样例：可搜 $\sim 40\,\mathrm{ms}$，热搜 $1\,\mathrm{ms}$，source $=\texttt{disk-hydrate-first}$（\texttt{test:perf-hydrate}）。
+
+\subsection{冷启动（应用壳，非索引）}
+asar $291\,\mathrm{MB}\to 5.6\,\mathrm{MB}$ 等优化后：median ready $516\,\mathrm{ms}$ / interactive $748\,\mathrm{ms}$（弃首跑 AV）；门槛 ready$\le 2500$，interactive$\le 4500$。首启仍可能受 Defender 影响至数秒。
+
+\subsection{UI 虚拟化（附）}
+S-mem open $\sim 357\,\mathrm{ms}$，paced/fling longtask $0$；大目录 DOM $\ll N$（list/col/gal/grid 约 $28/43/15/42$）。
+
+%==============================================================================
+\section{复杂度与正确性要点}
+%==============================================================================
+
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+操作 & 时间（均摊/期望） & 备注 \\
+\midrule
+Dirent BFS 枚举 & $\Theta(N)$ IO + CPU & 受磁盘与杀软谷期主导 \\
+path upsert（父链） & $O(\mathrm{depth})$ & 分量 intern \\
+前缀 query & $O(\log N + K)$ & 排序名索引 + 扫描前缀段 \\
+contains query & $O(N)$ 最坏 & 短词/多词；早停 $K$ \\
+paySlice & $O(ops)$ & 受 ms 预算截断 \\
+hydrate .aidx & $\Theta(N)$ 顺序读 & 不经 V8 解析百万行 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+正确性注意：
+\begin{itemize}[leftmargin=1.6em]
+  \item 搜索取消靠单调 $jobId$，旧任务结果丢弃；
+  \item hydrate 代数与 \texttt{generation} 防止过期 walk 写回；
+  \item MFT 无特权必须降级，不可空结果冒充完成；
+  \item FTS 涓流不得在 $meta.size=0$ 时误 clear 债。
+\end{itemize}
+
+%==============================================================================
+\section{复现实验}
+%==============================================================================
+
+\begin{lstlisting}
+# WSL 或 Windows（索引压测在 Windows 主机）
+npm ci
+npm run native:indexd
+npm run native:walk-bench
+# 可选特权
+npm run native:mft-enum
+
+npm run test:perf-volume          # Perf 轨整卷
+npm run test:perf-indexd          # indexd 门槛
+npm run test:perf-hydrate
+npm run test:perf-bakeoff -- --volume E:\
+npm run test:perf-bakeoff:elevated
+\end{lstlisting}
+
+本 PDF 编译（WSL）：
+\begin{lstlisting}
+cd docs/tex
+xelatex -interaction=nonstopmode aurora-index-search.tex
+xelatex -interaction=nonstopmode aurora-index-search.tex
+\end{lstlisting}
+
+原始叙事与逐次 runId：\texttt{docs/perf-ledger.md}、\texttt{docs/indexd-resident.md}、\texttt{docs/bakeoff-engine.md}、\texttt{docs/index-tracks.md}、\texttt{docs/research-volume-scan-diff.md}。
+
+%==============================================================================
+\section{结论}
+%==============================================================================
+
+Aurora Files 的索引/搜索核心可概括为四句话：
+\begin{enumerate}[leftmargin=1.6em]
+  \item \textbf{可搜与完备分离}——T1 最小可搜 + IndexDebt 错峰；
+  \item \textbf{引擎可替换}——WalkEngine $mft\to rust\to js$ 静默降级；
+  \item \textbf{权威数据出 V8}——indexd 父链 + \texttt{.aidx}，Node 编排；
+  \item \textbf{二次打开 hydrate-first}——秒级体感来自盘缓存，而非承诺首次冷扫秒完。
+\end{enumerate}
+在个人非商用场景下，同机百万级卷已达到：T1 约 $6$–$7\,\mathrm{s}$（冷扫）或数十毫秒（hydrate），热搜亚毫秒至数毫秒，Node+indexd RSS 合计约 $150\,\mathrm{MB}$ 量级——足以支撑日常自用文件管理器的搜索体验。
+
+\vspace{1.5em}
+\noindent\textit{MIT License · Aurora Files v0.1.5 · 本文档随仓库 \texttt{docs/tex/} 维护。}
+
+\end{document}
