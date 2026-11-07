@@ -5,8 +5,10 @@ import path from 'node:path';
 
 /** 逻辑路径 → 可安全传给 fs 的路径 */
 export function fsPath(absPath) {
-  const n = path.win32.normalize(String(absPath || ''));
-  if (process.platform !== 'win32') return n;
+  const raw = String(absPath || '');
+  // CI / unit tests on Linux: keep POSIX paths. win32.normalize('/tmp/x') → '\tmp\x' (ENOENT).
+  if (process.platform !== 'win32') return path.normalize(raw);
+  const n = path.win32.normalize(raw);
   try {
     return path.toNamespacedPath(n);
   } catch {

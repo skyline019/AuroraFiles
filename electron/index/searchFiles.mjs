@@ -15,6 +15,11 @@ export function cancelSearch() {
 
 function normalizePath(p) {
   if (!p || typeof p !== 'string') throw new Error('无效路径');
+  if (process.platform !== 'win32') {
+    const n = path.normalize(p);
+    if (!path.isAbsolute(n)) throw new Error('仅支持绝对路径');
+    return n;
+  }
   const n = path.win32.normalize(p);
   if (!path.win32.isAbsolute(n)) throw new Error('仅支持绝对路径');
   return n;

@@ -36,9 +36,10 @@ function entryFromStat(fullLogical, name, st) {
 /** 已是逻辑路径时避免 path.join 开销 */
 function joinLogical(dir, name) {
   if (!dir) return name;
+  const sep = process.platform === 'win32' ? '\\' : '/';
   const last = dir.charCodeAt(dir.length - 1);
   if (last === 92 || last === 47) return dir + name;
-  return `${dir}\\${name}`;
+  return `${dir}${sep}${name}`;
 }
 
 /**
@@ -69,7 +70,9 @@ export async function parallelDirentWalk(root, opts = {}) {
   const yieldEvery = Number(knobs.yieldEvery) > 0 ? Number(knobs.yieldEvery) : (maxPerf ? 8192 : 512);
   const progressMs = Number(knobs.progressMs) > 0 ? Number(knobs.progressMs) : (maxPerf ? 250 : 600);
 
-  const rootLogical = logicalPath(path.win32.normalize(root));
+  const rootLogical = logicalPath(
+    process.platform === 'win32' ? path.win32.normalize(root) : path.normalize(root),
+  );
   /** @type {{ dir: string, depth: number }[]} */
   const queue = [{ dir: rootLogical, depth: 0 }];
   let qHead = 0;
