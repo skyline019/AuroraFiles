@@ -57,6 +57,7 @@ export function useGlobalKeys() {
 
       if (st.paletteOpen) return;
       if (e.key === 'Escape') {
+        if (st.context) { st.setContext(null); return; }
         if (st.quickLookId) { st.setQuickLook(null); return; }
         if (st.batchOpen) { st.setBatch(false); return; }
         if (st.shortcutsOpen) { st.setShortcuts(false); return; }

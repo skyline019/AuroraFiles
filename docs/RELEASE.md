@@ -1,8 +1,8 @@
 # Aurora Files — Build & Release
 
-当前版本：**0.1.4**（见根目录 `package.json`）。  
+当前版本：**0.1.5**（见根目录 `package.json`）。  
 **发布仓：** [skylinezhanghan-wq/AuroraFiles](https://github.com/skylinezhanghan-wq/AuroraFiles)。  
-发布说明：[`RELEASE_NOTES_v0.1.4.md`](./RELEASE_NOTES_v0.1.4.md)。
+发布说明：[`RELEASE_NOTES_v0.1.5.md`](./RELEASE_NOTES_v0.1.5.md)。
 
 ## 内置 ffmpeg
 
@@ -72,8 +72,8 @@ npm run build:desktop:signed
 抽查：
 
 ```powershell
-Get-AuthenticodeSignature .\release\AuroraFiles-Setup-0.1.4.exe
-Get-AuthenticodeSignature .\release\AuroraFiles-Portable-0.1.4.exe
+Get-AuthenticodeSignature .\release\AuroraFiles-Setup-0.1.5.exe
+Get-AuthenticodeSignature .\release\AuroraFiles-Portable-0.1.5.exe
 Get-AuthenticodeSignature .\release\win-unpacked\AuroraFiles.exe
 ```
 
@@ -83,17 +83,17 @@ Get-AuthenticodeSignature .\release\win-unpacked\AuroraFiles.exe
 
 ```bash
 npx cross-env AURORA_ELECTRON=1 vite build
-npx electron-builder --win --x64 --publish never --config.directories.output=release-0.1.4
+npx electron-builder --win --x64 --publish never --config.directories.output=release-0.1.5
 ```
 
 然后将 `AuroraFiles-Setup-*.exe` / `Portable` / `latest.yml` 拷入 `release/`。
 
-### 产物（0.1.4）
+### 产物（0.1.5）
 
 | 文件 | 说明 |
 |---|---|
-| `release/AuroraFiles-Setup-0.1.4.exe` | NSIS installer（签名） |
-| `release/AuroraFiles-Portable-0.1.4.exe` | Portable（签名） |
+| `release/AuroraFiles-Setup-0.1.5.exe` | NSIS installer（签名） |
+| `release/AuroraFiles-Portable-0.1.5.exe` | Portable（签名） |
 | `release/latest.yml` | electron-updater feed |
 | `release/win-unpacked/AuroraFiles.exe` | 解包目录（推荐验证） |
 

@@ -44,6 +44,7 @@ function MenuPanel({ items, x, y, onClose }: { items: MItem[]; x: number; y: num
       style={{ left: pos.x, top: pos.y }}
       className="fixed z-[95] min-w-[218px] rounded-xl border border-black/[.09] bg-white/[.92] p-1 shadow-2xl shadow-black/25 backdrop-blur-2xl dark:border-white/[.12] dark:bg-[#2c2c2e]/[.94]"
       onContextMenu={(e) => e.preventDefault()}
+      onPointerDown={(e) => e.stopPropagation()}
       data-testid="context-menu"
       role="menu"
     >
@@ -104,17 +105,27 @@ export function ContextMenu() {
   const m = s.context;
   useEffect(() => {
     if (!m) return;
-    const close = () => s.setContext(null);
+    const close = () => useStore.getState().setContext(null);
+    const onPointerDown = (e: PointerEvent) => {
+      const t = e.target;
+      if (t instanceof Node) {
+        const menu = document.querySelector('[data-testid="context-menu"]');
+        if (menu?.contains(t)) return;
+      }
+      close();
+    };
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
-    window.addEventListener('mousedown', close);
+    // pointerdown (not mousedown): still dismiss outside clicks, but must ignore
+    // presses inside the menu — otherwise the item never receives click.
+    window.addEventListener('pointerdown', onPointerDown, true);
     window.addEventListener('blur', close);
     window.addEventListener('keydown', onKey);
     return () => {
-      window.removeEventListener('mousedown', close);
+      window.removeEventListener('pointerdown', onPointerDown, true);
       window.removeEventListener('blur', close);
       window.removeEventListener('keydown', onKey);
     };
-  }, [m, s]);
+  }, [m]);
 
   const items = useMemo((): MItem[] => {
     if (!m) return [];
