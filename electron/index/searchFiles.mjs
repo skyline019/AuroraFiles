@@ -30,20 +30,32 @@ export async function searchFiles(rootPath, query, opts = {}) {
 
   const jobId = ++searchJobId;
   const aborted = () => jobId !== searchJobId;
-  const skip = effectiveSkipSet();
+  /** @type {'builtin'|'minimal'|'none'} */
+  const skipMode = opts.skipMode || 'builtin';
+  const skip = effectiveSkipSet(undefined, skipMode);
 
-  if (opts.indexDepth !== 0) {
-    void ensureIndexed(root, { maxDepth: opts.indexDepth ?? 10, maxScan: opts.maxScan ?? 80_000 });
+  /** 压测用：跳过索引，只走目录 walk（真冷路径） */
+  const forceWalk = opts.forceWalk === true;
+
+  if (!forceWalk && opts.indexDepth !== 0) {
+    void ensureIndexed(root, {
+      maxDepth: opts.indexDepth ?? 10,
+      maxScan: opts.maxScan ?? 80_000,
+      skipMode,
+      followReparse: opts.followReparse === true,
+    });
   }
 
-  const indexed = await queryIndex(root, q, {
-    maxResults: opts.maxResults || 400,
-  });
-  if (aborted()) {
-    return { items: [], truncated: true, scanned: indexed.scanned || 0, source: 'cancelled', cancelled: true };
-  }
-  if (indexed.items.length || indexed.source?.startsWith('index')) {
-    return indexed;
+  if (!forceWalk) {
+    const indexed = await queryIndex(root, q, {
+      maxResults: opts.maxResults || 400,
+    });
+    if (aborted()) {
+      return { items: [], truncated: true, scanned: indexed.scanned || 0, source: 'cancelled', cancelled: true };
+    }
+    if (indexed.items.length || indexed.source?.startsWith('index')) {
+      return indexed;
+    }
   }
 
   const maxResults = Math.min(Number(opts.maxResults) || 400, 2000);
@@ -59,27 +71,30 @@ export async function searchFiles(rootPath, query, opts = {}) {
       truncated = true;
       return;
     }
-    let names;
+    let ents;
     try {
-      names = await fs.readdir(dir);
+      ents = await fs.readdir(dir, { withFileTypes: true });
     } catch {
       return;
     }
-    for (const name of names) {
+    for (const ent of ents) {
       if (aborted()) return;
       if (truncated || items.length >= maxResults || scanned >= maxScan) {
         truncated = true;
         return;
       }
+      const name = ent.name;
       if (skip.has(name.toLowerCase())) continue;
+      if (ent.isSymbolicLink?.()) continue;
       const full = path.join(dir, name);
       scanned += 1;
       let st;
       try {
-        st = await fs.stat(full);
+        st = await fs.lstat(full);
       } catch {
         continue;
       }
+      if (st.isSymbolicLink?.()) continue;
       if (name.toLowerCase().includes(q)) {
         const entry = {
           path: full,
@@ -91,7 +106,7 @@ export async function searchFiles(rootPath, query, opts = {}) {
         items.push(entry);
         noteFsChange(root, full, entry);
       }
-      if (st.isDirectory() && depth < maxDepth) await walk(full, depth + 1);
+      if (st.isDirectory() && !st.isSymbolicLink() && depth < maxDepth) await walk(full, depth + 1);
     }
   }
 

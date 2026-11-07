@@ -158,15 +158,14 @@ export async function hydrateFolder(
   }
   if (!/^[A-Za-z]:[\\/]/.test(abs)) return nodes;
 
-  const next = { ...nodes };
   const entries = await api().listDir(abs, { showHidden });
-  const parent = next[abs] ?? next[folderId];
+  const parent = nodes[abs] ?? nodes[folderId];
   if (!parent) return nodes;
 
   const childIds: string[] = [];
-  // 小目录才批量读 ADS，大目录走 localStorage，避免拖慢列表
+  // 进夹热路径：仅极小目录读 ADS；其余沿用 prev.tags / localStorage
   const adsMap = new Map<string, string[]>();
-  if (entries.length <= 150) {
+  if (entries.length <= 48) {
     const tagPairs = await Promise.all(
       entries.map(async (ent) => {
         try {
@@ -180,9 +179,11 @@ export async function hydrateFolder(
     for (const [p, t] of tagPairs) if (t.length) adsMap.set(p, t);
   }
 
+  /** 只浅拷贝变更键，避免每次进夹复制整棵 nodes */
+  const patch: Record<string, FSNode> = {};
   for (const ent of entries) {
     const n = entryToNode(ent, abs);
-    const prev = next[n.id];
+    const prev = nodes[n.id];
     const adsTags = adsMap.get(ent.path);
     if (adsTags?.length) n.tags = adsTags as FSNode['tags'];
     if (prev) {
@@ -191,13 +192,13 @@ export async function hydrateFolder(
       n.locked = prev.locked;
       n.childrenIds = prev.childrenIds;
     }
-    next[n.id] = n;
+    patch[n.id] = n;
     childIds.push(n.id);
   }
   const updated = { ...parent, id: abs, childrenIds: childIds, accessedAt: Date.now() };
-  next[abs] = updated;
-  if (folderId !== abs) next[folderId] = updated;
-  return next;
+  patch[abs] = updated;
+  if (folderId !== abs) patch[folderId] = updated;
+  return { ...nodes, ...patch };
 }
 
 export function demoNodes(): Record<string, FSNode> {

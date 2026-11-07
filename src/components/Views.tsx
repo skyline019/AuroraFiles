@@ -1,4 +1,4 @@
-import { useRef, useState, useMemo, useCallback, useEffect } from 'react';
+import { useRef, useState, useMemo, useCallback, useEffect, memo } from 'react';
 import {
   ChevronUp, ChevronDown, FolderOpen, SearchX, Trash2, RotateCcw, Folder as FolderLucide, Loader2, X,
 } from 'lucide-react';
@@ -7,17 +7,34 @@ import { useStore, useActiveTab, useItems, useCurrentLocation, currentNodeId } f
 import { FileGlyph, FolderIcon, ImageThumb, TagDot, DriveIcon } from './icons';
 import { FSNode, ID, SortKey, formatSize, formatDate, kindLabel } from '@/lib/fs';
 import { useVirtualWindow } from '@/hooks/useVirtualWindow';
-import { cellRect, computeGridMetrics, hitTestMarquee, totalGridHeight, visibleIndexRange } from '@/lib/gridLayout';
+import { useGridWindow } from '@/hooks/useRafViewport';
+import { useEnsureSelectionVisible, listScrollToIndex } from '@/hooks/useEnsureSelectionVisible';
+import { cellRect, hitTestMarquee, totalGridHeight } from '@/lib/gridLayout';
 import { cn } from '@/utils/cn';
 import { searchSourceLabel } from '@/lib/indexLabel';
 
 const LIST_ROW_H = 32;
 
-// ── 名称标签 / 重命名 ───────────────────────────────────────
-export function NameLabel({ node, center, small }: { node: FSNode; center?: boolean; small?: boolean }) {
-  const s = useStore();
-  const tab = useActiveTab();
-  if (tab.renaming === node.id) {
+// ── 名称标签 / 重命名（避免无 selector 的 useStore，防止每格订阅整棵 store）──
+export function NameLabel({
+  node,
+  center,
+  small,
+  renaming: renamingProp,
+}: {
+  node: FSNode;
+  center?: boolean;
+  small?: boolean;
+  /** 若由父级传入则不再订阅 store */
+  renaming?: boolean;
+}) {
+  const renamingFromStore = useStore((s) => {
+    if (renamingProp !== undefined) return false;
+    const t = s.tabs.find((x) => x.id === s.activeTabId);
+    return t?.renaming === node.id;
+  });
+  const renaming = renamingProp !== undefined ? renamingProp : renamingFromStore;
+  if (renaming) {
     return (
       <input
         autoFocus
@@ -30,10 +47,11 @@ export function NameLabel({ node, center, small }: { node: FSNode; center?: bool
         }}
         onKeyDown={(e) => {
           e.stopPropagation();
-          if (e.key === 'Enter') s.commitRename(node.id, (e.target as HTMLInputElement).value);
-          if (e.key === 'Escape') s.patchTab({ renaming: null });
+          const st = useStore.getState();
+          if (e.key === 'Enter') st.commitRename(node.id, (e.target as HTMLInputElement).value);
+          if (e.key === 'Escape') st.patchTab({ renaming: null });
         }}
-        onBlur={(e) => s.commitRename(node.id, e.target.value)}
+        onBlur={(e) => useStore.getState().commitRename(node.id, e.target.value)}
         onClick={(e) => e.stopPropagation()}
         onDoubleClick={(e) => e.stopPropagation()}
       />
@@ -61,94 +79,120 @@ export function TagDots({ node, size = 7 }: { node: FSNode; size?: number }) {
   );
 }
 
-// ── 共享交互 ────────────────────────────────────────────────
+const EMPTY_SEL: string[] = [];
+
+// ── 共享交互（窄订阅：不因 toast/深搜等无关字段重渲染）────────────────
 export function useFileHandlers(orderedIds: string[]) {
-  const s = useStore();
-  const tab = useActiveTab();
+  const selection = useStore((s) => {
+    const t = s.tabs.find((x) => x.id === s.activeTabId);
+    return t?.selection ?? EMPTY_SEL;
+  });
+  const cutIds = useStore((s) =>
+    s.clipboard?.mode === 'cut' ? s.clipboard.ids : null,
+  );
+  const orderedRef = useRef(orderedIds);
+  orderedRef.current = orderedIds;
+  const selectionRef = useRef(selection);
+  selectionRef.current = selection;
   const anchor = useRef<string | null>(null);
   const [dropId, setDropId] = useState<string | null>(null);
 
   const click = useCallback((e: React.MouseEvent, node: FSNode, orderOverride?: string[]) => {
     e.stopPropagation();
-    const order = orderOverride ?? orderedIds;
-    const sel = tab.selection;
+    const st = useStore.getState();
+    const order = orderOverride ?? orderedRef.current;
+    const sel = selectionRef.current;
     if (e.shiftKey && anchor.current && order.includes(anchor.current)) {
       const a = order.indexOf(anchor.current);
       const b = order.indexOf(node.id);
       if (a >= 0 && b >= 0) {
-        s.setSelection(order.slice(Math.min(a, b), Math.max(a, b) + 1));
+        st.setSelection(order.slice(Math.min(a, b), Math.max(a, b) + 1));
         return;
       }
     }
     if (e.ctrlKey || e.metaKey) {
-      s.setSelection(sel.includes(node.id) ? sel.filter(x => x !== node.id) : [...sel, node.id]);
+      st.setSelection(sel.includes(node.id) ? sel.filter((x) => x !== node.id) : [...sel, node.id]);
     } else {
-      s.setSelection([node.id]);
+      st.setSelection([node.id]);
     }
     anchor.current = node.id;
-  }, [tab.selection, orderedIds, s]);
+  }, []);
 
   const ctx = useCallback((e: React.MouseEvent, node: FSNode) => {
     e.preventDefault();
     e.stopPropagation();
-    const sel = tab.selection.includes(node.id) ? tab.selection : [node.id];
-    if (!tab.selection.includes(node.id)) s.setSelection([node.id]);
+    const st = useStore.getState();
+    const sel = selectionRef.current.includes(node.id) ? selectionRef.current : [node.id];
+    if (!selectionRef.current.includes(node.id)) st.setSelection([node.id]);
     anchor.current = node.id;
-    s.setContext({ x: e.clientX, y: e.clientY, ids: sel });
-  }, [tab.selection, s]);
+    st.setContext({ x: e.clientX, y: e.clientY, ids: sel });
+  }, []);
 
   const dragStart = useCallback((e: React.DragEvent, node: FSNode) => {
-    const ids = tab.selection.includes(node.id) ? tab.selection : [node.id];
-    if (!tab.selection.includes(node.id)) s.setSelection([node.id]);
+    const st = useStore.getState();
+    const sel = selectionRef.current;
+    const ids = sel.includes(node.id) ? sel : [node.id];
+    if (!sel.includes(node.id)) st.setSelection([node.id]);
     e.dataTransfer.setData('application/x-aurora', JSON.stringify(ids));
     e.dataTransfer.effectAllowed = 'copyMove';
-  }, [tab.selection, s]);
+  }, []);
 
   const folderTarget = useCallback((node: FSNode) => ({
     onDragOver: (e: React.DragEvent) => {
       if (!e.dataTransfer.types.includes('application/x-aurora')) return;
-      if (tab.selection.includes(node.id)) return;
+      if (selectionRef.current.includes(node.id)) return;
       e.preventDefault();
       e.stopPropagation();
       setDropId(node.id);
     },
-    onDragLeave: () => setDropId(d => (d === node.id ? null : d)),
+    onDragLeave: () => setDropId((d) => (d === node.id ? null : d)),
     onDrop: (e: React.DragEvent) => {
       e.preventDefault();
       e.stopPropagation();
       setDropId(null);
+      const st = useStore.getState();
       try {
         const ids = JSON.parse(e.dataTransfer.getData('application/x-aurora')) as string[];
         if (ids?.length) {
-          if (node.id === ID.trash) s.trash(ids);
-          else if (node.deleted || node.kind === 'file') s.toast('无法移动到该位置');
-          else s.moveTo(ids, node.id);
+          if (node.id === ID.trash) st.trash(ids);
+          else if (node.deleted || node.kind === 'file') st.toast('无法移动到该位置');
+          else st.moveTo(ids, node.id);
         }
       } catch { /* ignore */ }
     },
-  }), [tab.selection, s]);
+  }), []);
 
   const bgCtx = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
-    s.setContext({ x: e.clientX, y: e.clientY, ids: [] });
-  }, [s]);
+    useStore.getState().setContext({ x: e.clientX, y: e.clientY, ids: [] });
+  }, []);
 
-  const isCut = useCallback((id: string) => s.clipboard?.mode === 'cut' && s.clipboard.ids.includes(id), [s.clipboard]);
+  const cutSet = useMemo(() => (cutIds ? new Set(cutIds) : null), [cutIds]);
+  const isCut = useCallback((id: string) => !!cutSet?.has(id), [cutSet]);
 
-  return { click, ctx, dragStart, folderTarget, bgCtx, dropId, isCut };
+  return { click, ctx, dragStart, folderTarget, bgCtx, dropId, isCut, cutSet };
 }
 
 // ── 特殊位置标题条 ──────────────────────────────────────────
 export function LocationHeader({ count }: { count: number }) {
-  const s = useStore();
+  const cancelDeepSearch = useStore((s) => s.cancelDeepSearch);
+  const restore = useStore((s) => s.restore);
+  const emptyTrash = useStore((s) => s.emptyTrash);
+  const deepHitsLen = useStore((s) => s.deepHits?.length ?? 0);
+  const deepMeta = useStore((s) => s.deepMeta);
+  const deepBusy = useStore((s) => s.deepSearching);
+  const folderBusy = useStore((s) => s.folderRefreshing);
+  const locName = useStore((s) => {
+    const tab = s.tabs.find((t) => t.id === s.activeTabId) ?? s.tabs[0];
+    const loc = tab.history[tab.hi];
+    return loc.t === 'node' ? s.nodes[loc.id]?.name : undefined;
+  });
   const tab = useActiveTab();
   const loc = useCurrentLocation();
   const nodeId = currentNodeId(tab);
   const isTrash = nodeId === ID.trash;
   const searching = !!tab.search.trim();
-  const deep = !!s.deepHits?.length;
-  const deepBusy = s.deepSearching;
-  const folderBusy = s.folderRefreshing;
+  const deep = deepHitsLen > 0;
   if (!searching && !deepBusy && !folderBusy && !isTrash && nodeId !== ID.recent && nodeId !== ID.quick && loc.t !== 'tag') return null;
   return (
     <div className="flex shrink-0 items-center gap-3 border-b border-black/[.05] px-4 py-2 text-[12.5px] text-zinc-500 dark:border-white/[.07] dark:text-zinc-400">
@@ -160,7 +204,7 @@ export function LocationHeader({ count }: { count: number }) {
           </span>
           <button
             type="button"
-            onClick={() => s.cancelDeepSearch()}
+            onClick={() => cancelDeepSearch()}
             className="flex items-center gap-1 rounded-md px-2 py-0.5 text-[12px] font-medium text-zinc-500 transition-colors hover:bg-black/[.06] hover:text-zinc-700 dark:hover:bg-white/[.08]"
           >
             <X size={12} strokeWidth={2.5} />取消
@@ -173,11 +217,11 @@ export function LocationHeader({ count }: { count: number }) {
         </span>
       ) : searching ? (
         <span>
-          {deep ? '深度搜索' : '当前范围'}「{loc.t === 'node' ? s.nodes[loc.id]?.name : '标签'}」
+          {deep ? '深度搜索' : '当前范围'}「{loc.t === 'node' ? locName : '标签'}」
           找到 <b className="text-zinc-700 dark:text-zinc-200">{count}</b> 个匹配
           “<b className="text-[#0a84ff]">{tab.search}</b>”
-          {s.deepMeta
-            ? ` · ${searchSourceLabel(s.deepMeta.source, s.deepMeta.cached)} ${s.deepMeta.scanned}${s.deepMeta.truncated ? '（已截断）' : ''}`
+          {deepMeta
+            ? ` · ${searchSourceLabel(deepMeta.source, deepMeta.cached)} ${deepMeta.scanned}${deepMeta.truncated ? '（已截断）' : ''}`
             : ''}
           {!deep && ' · Enter 含子文件夹'}
         </span>
@@ -188,12 +232,12 @@ export function LocationHeader({ count }: { count: number }) {
           <span className="flex-1" />
           <button
             disabled={!tab.selection.length}
-            onClick={() => s.restore(tab.selection)}
+            onClick={() => restore(tab.selection)}
             className="flex items-center gap-1 rounded-md px-2 py-1 font-medium text-[#0a84ff] transition-colors hover:bg-[#0a84ff]/10 disabled:opacity-35"
           ><RotateCcw size={13} strokeWidth={2} />还原所选</button>
           <button
             disabled={!count}
-            onClick={s.emptyTrash}
+            onClick={emptyTrash}
             className="flex items-center gap-1 rounded-md px-2 py-1 font-medium text-red-500 transition-colors hover:bg-red-500/10 disabled:opacity-35"
           ><Trash2 size={13} strokeWidth={2} />清空回收站</button>
         </>
@@ -211,11 +255,11 @@ export function LocationHeader({ count }: { count: number }) {
 
 // ── 空状态 ──────────────────────────────────────────────────
 export function EmptyState() {
-  const s = useStore();
+  const cancelDeepSearch = useStore((s) => s.cancelDeepSearch);
+  const deepBusy = useStore((s) => s.deepSearching);
   const tab = useActiveTab();
   const nodeId = currentNodeId(tab);
   const searching = !!tab.search.trim();
-  const deepBusy = s.deepSearching;
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 text-zinc-300 dark:text-zinc-600">
       {deepBusy ? (
@@ -239,7 +283,7 @@ export function EmptyState() {
       {deepBusy ? (
         <button
           type="button"
-          onClick={() => s.cancelDeepSearch()}
+          onClick={() => cancelDeepSearch()}
           className="rounded-md px-3 py-1 text-[12.5px] font-medium text-[#0a84ff] hover:bg-[#0a84ff]/10"
         >取消搜索</button>
       ) : searching ? (
@@ -284,55 +328,125 @@ export function FolderBusyOverlay() {
 
 // ── 图标（网格）视图：几何虚拟化 + 框选不依赖全量 DOM ────────
 export function GridView() {
-  const s = useStore();
   const tab = useActiveTab();
   const items = useItems();
-  const orderedIds = useMemo(() => items.map(i => i.id), [items]);
+  const orderedIds = useMemo(() => items.map((i) => i.id), [items]);
+  const itemsById = useMemo(() => {
+    const m = new Map<string, FSNode>();
+    for (const n of items) m.set(n.id, n);
+    return m;
+  }, [items]);
   const h = useFileHandlers(orderedIds);
   const wrapRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const [marquee, setMarquee] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const marqueeBase = useRef<string[]>([]);
   const size = tab.iconSize;
-  const [viewport, setViewport] = useState({ w: 800, h: 600, scrollTop: 0 });
+  const selectedSet = useMemo(() => new Set(tab.selection), [tab.selection]);
+  const { metrics, range, w: viewportW } = useGridWindow(wrapRef, items.length, size, 1);
+  const totalH = useMemo(() => totalGridHeight(items.length, metrics), [items.length, metrics]);
+  const slice = items.slice(range.start, range.end);
+  const orderedRef = useRef(orderedIds);
+  orderedRef.current = orderedIds;
+  const metricsRef = useRef(metrics);
+  metricsRef.current = metrics;
+  const itemsLenRef = useRef(items.length);
+  itemsLenRef.current = items.length;
+  const hRef = useRef(h);
+  hRef.current = h;
+  const itemsByIdRef = useRef(itemsById);
+  itemsByIdRef.current = itemsById;
+  const scrollIdle = useRef(0);
 
+  // DOM-only scroll flag — no React commit (preserves useGridWindow skip-same-window)
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
-    const sync = () => setViewport({ w: el.clientWidth, h: el.clientHeight, scrollTop: el.scrollTop });
-    sync();
-    const onScroll = () => setViewport((v) => ({ ...v, scrollTop: el.scrollTop }));
-    const ro = new ResizeObserver(sync);
+    const onScroll = () => {
+      el.dataset.scrolling = '1';
+      window.clearTimeout(scrollIdle.current);
+      scrollIdle.current = window.setTimeout(() => {
+        delete el.dataset.scrolling;
+      }, 120);
+    };
     el.addEventListener('scroll', onScroll, { passive: true });
-    ro.observe(el);
-    return () => { el.removeEventListener('scroll', onScroll); ro.disconnect(); };
+    return () => {
+      el.removeEventListener('scroll', onScroll);
+      window.clearTimeout(scrollIdle.current);
+    };
   }, []);
 
-  const metrics = useMemo(() => computeGridMetrics(viewport.w, size), [viewport.w, size]);
-  const range = useMemo(
-    () => visibleIndexRange(viewport.scrollTop, viewport.h, items.length, metrics, 2),
-    [viewport.scrollTop, viewport.h, items.length, metrics],
+  const scrollSelToIndex = useCallback((el: HTMLElement, index: number) => {
+    const box = cellRect(index, metricsRef.current);
+    const top = box.y - el.clientHeight / 2 + box.h / 2;
+    el.scrollTo({ top: Math.max(0, top), behavior: 'auto' });
+  }, []);
+  useEnsureSelectionVisible(wrapRef, orderedIds, tab.selection, scrollSelToIndex);
+
+  const nodeFromEvent = useCallback((e: React.SyntheticEvent) => {
+    const el = (e.target as HTMLElement).closest('[data-item]');
+    if (!el) return null;
+    const id = el.getAttribute('data-item');
+    return id ? itemsByIdRef.current.get(id) ?? null : null;
+  }, []);
+
+  const onDelegatedClick = useCallback(
+    (e: React.MouseEvent) => {
+      const node = nodeFromEvent(e);
+      if (!node) return;
+      hRef.current.click(e, node);
+    },
+    [nodeFromEvent],
   );
-  const totalH = useMemo(() => totalGridHeight(items.length, metrics), [items.length, metrics]);
-  const slice = items.slice(range.start, range.end);
+
+  const onDelegatedDblClick = useCallback(
+    (e: React.MouseEvent) => {
+      const node = nodeFromEvent(e);
+      if (!node) return;
+      useStore.getState().openNode(node.id);
+    },
+    [nodeFromEvent],
+  );
+
+  const onDelegatedCtx = useCallback(
+    (e: React.MouseEvent) => {
+      const node = nodeFromEvent(e);
+      if (!node) {
+        hRef.current.bgCtx(e);
+        return;
+      }
+      hRef.current.ctx(e, node);
+    },
+    [nodeFromEvent],
+  );
+
+  const onDelegatedDragStart = useCallback(
+    (e: React.DragEvent) => {
+      const node = nodeFromEvent(e);
+      if (!node) return;
+      hRef.current.dragStart(e, node);
+    },
+    [nodeFromEvent],
+  );
 
   const onPointerDown = (e: React.PointerEvent) => {
     if (e.button !== 0) return;
     if ((e.target as HTMLElement).closest('[data-item]') || (e.target as HTMLElement).closest('input')) return;
-    s.setSelection([]);
+    const st = useStore.getState();
+    st.setSelection([]);
     const rect = contentRef.current!.getBoundingClientRect();
     const sx = e.clientX - rect.left + (wrapRef.current?.scrollLeft || 0);
     const sy = e.clientY - rect.top + (wrapRef.current?.scrollTop || 0);
-    marqueeBase.current = (e.ctrlKey || e.metaKey) ? [...tab.selection] : [];
+    const active = st.tabs.find((t) => t.id === st.activeTabId);
+    marqueeBase.current = e.ctrlKey || e.metaKey ? [...(active?.selection ?? [])] : [];
     let cur = { x1: sx, y1: sy, x2: sx, y2: sy };
     const maxY = Math.max(0, totalH - 1);
-    const maxX = Math.max(0, (wrapRef.current?.scrollWidth || viewport.w) - 1);
+    const maxX = Math.max(0, (wrapRef.current?.scrollWidth || viewportW) - 1);
     const edge = 28;
     const move = (ev: PointerEvent) => {
       const wrap = wrapRef.current;
       if (!wrap) return;
       const wrapBox = wrap.getBoundingClientRect();
-      // 边缘自动滚动
       let dy = 0;
       let dx = 0;
       if (ev.clientY > wrapBox.bottom - edge) dy = Math.min(48, 8 + (ev.clientY - (wrapBox.bottom - edge)));
@@ -356,8 +470,8 @@ export function GridView() {
       const w = Math.abs(cur.x2 - cur.x1);
       const hh = Math.abs(cur.y2 - cur.y1);
       setMarquee({ x, y, w, h: hh });
-      const hit = hitTestMarquee(items.length, orderedIds, { x, y, w, h: hh }, metrics);
-      s.setSelection([...new Set([...marqueeBase.current, ...hit])]);
+      const hit = hitTestMarquee(itemsLenRef.current, orderedRef.current, { x, y, w, h: hh }, metricsRef.current);
+      useStore.getState().setSelection([...new Set([...marqueeBase.current, ...hit])]);
     };
     const upEvt = () => {
       setMarquee(null);
@@ -370,40 +484,36 @@ export function GridView() {
 
   if (!items.length) return <EmptyState />;
 
+  const renamingId = tab.renaming;
+  const cutSet = h.cutSet;
+
   return (
-    <div ref={wrapRef} className="no-select h-full overflow-auto" onContextMenu={h.bgCtx} onPointerDown={onPointerDown}>
+    <div
+      ref={wrapRef}
+      data-testid="grid-scroll"
+      className="no-select h-full overflow-auto"
+      onContextMenu={onDelegatedCtx}
+      onClick={onDelegatedClick}
+      onDoubleClick={onDelegatedDblClick}
+      onDragStart={onDelegatedDragStart}
+      onPointerDown={onPointerDown}
+    >
       <div ref={contentRef} className="relative" style={{ height: totalH, minHeight: '100%' }}>
         {slice.map((node, i) => {
           const index = range.start + i;
           const box = cellRect(index, metrics);
-          const selected = tab.selection.includes(node.id);
+          const needsFolderTarget = node.kind !== 'file' || node.id === ID.trash;
           return (
-            <div
-              key={node.id}
-              data-item={node.id}
-              draggable
-              onDragStart={(e) => h.dragStart(e, node)}
-              {...(node.kind !== 'file' || node.id === ID.trash ? h.folderTarget(node) : {})}
-              onClick={(e) => h.click(e, node)}
-              onDoubleClick={() => s.openNode(node.id)}
-              onContextMenu={(e) => h.ctx(e, node)}
-              className={cn(
-                'group absolute flex cursor-default flex-col items-center gap-[5px] rounded-xl p-2 transition-colors',
-                h.isCut(node.id) && 'opacity-45',
-              )}
-              style={{ left: box.x, top: box.y, width: box.w, height: box.h }}
-            >
-              <div className={cn(
-                'rounded-[10px] p-[6px] transition-all group-hover:bg-black/[.04] dark:group-hover:bg-white/[.05]',
-                selected && 'bg-[#0a84ff]/[.13] ring-1 ring-[#0a84ff]/50 group-hover:bg-[#0a84ff]/[.13] dark:bg-[#0a84ff]/[.22]',
-              )}>
-                <FileGlyph node={node} size={size} />
-              </div>
-              <div className={cn('w-full rounded-md px-1 py-px', selected && 'bg-[#0a84ff]/[.13] dark:bg-[#0a84ff]/[.22]')}>
-                <NameLabel node={node} center />
-              </div>
-              <TagDots node={node} />
-            </div>
+            <GridCell
+              key={`slot-${i}`}
+              node={node}
+              box={box}
+              size={size}
+              selected={selectedSet.has(node.id)}
+              cut={!!cutSet?.has(node.id)}
+              renaming={renamingId === node.id}
+              folderTargetProps={needsFolderTarget ? h.folderTarget(node) : undefined}
+            />
           );
         })}
         {marquee && (
@@ -417,6 +527,65 @@ export function GridView() {
   );
 }
 
+type GridCellProps = {
+  node: FSNode;
+  box: { x: number; y: number; w: number; h: number };
+  size: number;
+  selected: boolean;
+  cut: boolean;
+  renaming: boolean;
+  folderTargetProps?: Record<string, unknown>;
+};
+
+const GridCell = memo(function GridCell({
+  node,
+  box,
+  size,
+  selected,
+  cut,
+  renaming,
+  folderTargetProps,
+}: GridCellProps) {
+  return (
+    <div
+      data-item={node.id}
+      draggable
+      {...(folderTargetProps || {})}
+      className={cn(
+        'group absolute flex cursor-default flex-col items-center gap-[5px] rounded-xl p-2 transition-colors [[data-scrolling]_&]:transition-none',
+        cut && 'opacity-45',
+      )}
+      style={{
+        left: box.x,
+        top: box.y,
+        width: box.w,
+        height: box.h,
+        contentVisibility: 'auto',
+        containIntrinsicSize: `${box.w}px ${box.h}px`,
+      }}
+    >
+      <div
+        className={cn(
+          'rounded-[10px] p-[6px] transition-colors group-hover:bg-black/[.04] dark:group-hover:bg-white/[.05]',
+          selected &&
+            'bg-[#0a84ff]/[.13] ring-1 ring-[#0a84ff]/50 group-hover:bg-[#0a84ff]/[.13] dark:bg-[#0a84ff]/[.22]',
+        )}
+      >
+        <FileGlyph node={node} size={size} />
+      </div>
+      <div
+        className={cn(
+          'w-full rounded-md px-1 py-px',
+          selected && 'bg-[#0a84ff]/[.13] dark:bg-[#0a84ff]/[.22]',
+        )}
+      >
+        <NameLabel node={node} center renaming={renaming} />
+      </div>
+      <TagDots node={node} />
+    </div>
+  );
+});
+
 // ── 列表（详细信息）视图 ────────────────────────────────────
 const COLS: { k: SortKey | null; label: string; w: string; right?: boolean }[] = [
   { k: 'name', label: '名称', w: 'flex-1 min-w-[180px]' },
@@ -426,29 +595,69 @@ const COLS: { k: SortKey | null; label: string; w: string; right?: boolean }[] =
 ];
 
 export function ListView() {
-  const s = useStore();
   const tab = useActiveTab();
   const items = useItems();
-  const orderedIds = useMemo(() => items.map(i => i.id), [items]);
+  const orderedIds = useMemo(() => items.map((i) => i.id), [items]);
+  const itemsById = useMemo(() => {
+    const m = new Map<string, FSNode>();
+    for (const n of items) m.set(n.id, n);
+    return m;
+  }, [items]);
   const h = useFileHandlers(orderedIds);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const virt = useVirtualWindow(scrollRef, items.length, LIST_ROW_H, 16);
+  const virt = useVirtualWindow(scrollRef, items.length, LIST_ROW_H, 8);
   const slice = items.slice(virt.start, virt.end);
+  const selectedSet = useMemo(() => new Set(tab.selection), [tab.selection]);
+  const hRef = useRef(h);
+  hRef.current = h;
+  const itemsByIdRef = useRef(itemsById);
+  itemsByIdRef.current = itemsById;
+  useEnsureSelectionVisible(scrollRef, orderedIds, tab.selection, listScrollToIndex(LIST_ROW_H));
+
+  const nodeFromEvent = useCallback((e: React.SyntheticEvent) => {
+    const el = (e.target as HTMLElement).closest('[data-item]');
+    if (!el) return null;
+    const id = el.getAttribute('data-item');
+    return id ? itemsByIdRef.current.get(id) ?? null : null;
+  }, []);
 
   if (!items.length) return <EmptyState />;
 
   const headerClick = (k: SortKey | null) => {
     if (!k) return;
-    if (tab.sortKey === k) s.patchTab({ sortDir: tab.sortDir === 'asc' ? 'desc' : 'asc' });
-    else s.patchTab({ sortKey: k, sortDir: 'asc' });
+    const st = useStore.getState();
+    const t = st.tabs.find((x) => x.id === st.activeTabId);
+    if (!t) return;
+    if (t.sortKey === k) st.patchTab({ sortDir: t.sortDir === 'asc' ? 'desc' : 'asc' });
+    else st.patchTab({ sortKey: k, sortDir: 'asc' });
   };
 
   return (
     <div
       ref={scrollRef}
+      data-testid="list-scroll"
       className="no-select h-full overflow-auto px-2 pb-3"
-      onContextMenu={h.bgCtx}
-      onClick={() => s.setSelection([])}
+      onContextMenu={(e) => {
+        const node = nodeFromEvent(e);
+        if (!node) hRef.current.bgCtx(e);
+        else hRef.current.ctx(e, node);
+      }}
+      onClick={(e) => {
+        const node = nodeFromEvent(e);
+        if (!node) {
+          useStore.getState().setSelection([]);
+          return;
+        }
+        hRef.current.click(e, node);
+      }}
+      onDoubleClick={(e) => {
+        const node = nodeFromEvent(e);
+        if (node) useStore.getState().openNode(node.id);
+      }}
+      onDragStart={(e) => {
+        const node = nodeFromEvent(e);
+        if (node) hRef.current.dragStart(e, node);
+      }}
     >
       <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-black/[.07] bg-white/95 py-[7px] pl-3 pr-4 backdrop-blur dark:border-white/[.08] dark:bg-[#1f1f22]/95">
         {COLS.map(c => (
@@ -468,29 +677,58 @@ export function ListView() {
       </div>
       <div style={{ height: virt.totalHeight, position: 'relative' }}>
         <div style={{ transform: `translateY(${virt.offsetY}px)` }}>
-          {slice.map(node => {
-            const selected = tab.selection.includes(node.id);
+          {slice.map((node, i) => {
+            const selected = selectedSet.has(node.id);
+            const needsFolderTarget = node.kind !== 'file' || node.id === ID.trash;
             return (
+              <ListRow
+                key={`list-slot-${i}`}
+                node={node}
+                selected={selected}
+                cut={!!h.cutSet?.has(node.id)}
+                dropActive={h.dropId === node.id}
+                renaming={tab.renaming === node.id}
+                folderTargetProps={needsFolderTarget ? h.folderTarget(node) : undefined}
+              />
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const ListRow = memo(function ListRow({
+  node,
+  selected,
+  cut,
+  dropActive,
+  renaming,
+  folderTargetProps,
+}: {
+  node: FSNode;
+  selected: boolean;
+  cut: boolean;
+  dropActive: boolean;
+  renaming: boolean;
+  folderTargetProps?: Record<string, unknown>;
+}) {
+  return (
               <div
-                key={node.id}
                 data-item={node.id}
                 draggable
-                onDragStart={(e) => h.dragStart(e, node)}
-                {...(node.kind !== 'file' || node.id === ID.trash ? h.folderTarget(node) : {})}
-                onClick={(e) => h.click(e, node)}
-                onDoubleClick={() => s.openNode(node.id)}
-                onContextMenu={(e) => h.ctx(e, node)}
+                {...(folderTargetProps || {})}
                 style={{ height: LIST_ROW_H }}
                 className={cn(
                   'flex cursor-default items-center gap-2 rounded-[7px] py-[5px] pl-3 pr-4 transition-colors',
                   selected ? 'bg-[#0a84ff]/[.13] dark:bg-[#0a84ff]/[.22]' : 'hover:bg-black/[.03] dark:hover:bg-white/[.05]',
-                  h.isCut(node.id) && 'opacity-45',
-                  h.dropId === node.id && 'ring-2 ring-inset ring-[#0a84ff]',
+                  cut && 'opacity-45',
+                  dropActive && 'ring-2 ring-inset ring-[#0a84ff]',
                 )}
               >
-                <span className={cn('flex min-w-0 flex-1 items-center gap-2', h.dropId === node.id && 'pointer-events-none')}>
+                <span className={cn('flex min-w-0 flex-1 items-center gap-2', dropActive && 'pointer-events-none')}>
                   <FileGlyph node={node} size={19} />
-                  <NameLabel node={node} small />
+                  <NameLabel node={node} small renaming={renaming} />
                   <span className="flex items-center gap-[3px]">{node.tags.map(t => <TagDot key={t} color={t} size={7} ring={false} />)}</span>
                 </span>
                 <span className="w-[132px] text-[12px] text-zinc-400 tabular">{formatDate(node.modifiedAt)}</span>
@@ -499,13 +737,8 @@ export function ListView() {
                   {node.kind === 'file' ? formatSize(node.size) : '—'}
                 </span>
               </div>
-            );
-          })}
-        </div>
-      </div>
-    </div>
   );
-}
+});
 
 // ── 此电脑 ──────────────────────────────────────────────────
 export function ThisPCView() {
@@ -517,7 +750,7 @@ export function ThisPCView() {
   const od = nodes[ID.od];
 
   return (
-    <div className="h-full overflow-auto p-6" onContextMenu={h.bgCtx}>
+    <div className="h-full overflow-auto p-6" onContextMenu={h.bgCtx} data-testid="this-pc-view">
       <p className="mb-3 px-1 text-[13px] font-semibold text-zinc-500 dark:text-zinc-400">文件夹</p>
       <div className="mb-8 grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-2">
         {folders.map(n => (

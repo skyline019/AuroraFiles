@@ -1,93 +1,147 @@
-# Aurora Files
+<p align="center">
+  <img src="electron/build/icon.png" width="96" height="96" alt="Aurora Files" />
+</p>
 
-[![CI](https://github.com/skyline019/AuroraFiles/actions/workflows/ci.yml/badge.svg)](https://github.com/skyline019/AuroraFiles/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Windows%20x64-0078D4)](https://github.com/skyline019/AuroraFiles/releases)
+<h1 align="center">Aurora Files</h1>
 
-Apple-style file manager for **Windows** — real-disk browsing in Electron, with a polished Finder-inspired UI, searchable index, and rich preview.
+<p align="center">
+  <strong>An Apple-style file manager for Windows.</strong><br />
+  Real-disk browsing · fast search index · rich preview · Finder-inspired UI
+</p>
 
-> Demo mode (browser) ships a virtual disk for UI exploration. Desktop builds talk to the real filesystem.
+<p align="center">
+  <a href="https://github.com/skyline019/AuroraFiles/actions/workflows/ci.yml"><img src="https://github.com/skyline019/AuroraFiles/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://github.com/skyline019/AuroraFiles/releases"><img src="https://img.shields.io/github/v/release/skyline019/AuroraFiles?include_prereleases&label=release" alt="Release" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License" /></a>
+  <a href="https://github.com/skyline019/AuroraFiles/releases"><img src="https://img.shields.io/badge/platform-Windows%20x64-0078D4" alt="Platform" /></a>
+</p>
 
-## Features
+<p align="center">
+  <a href="#install">Install</a> ·
+  <a href="#features">Features</a> ·
+  <a href="#development">Development</a> ·
+  <a href="#documentation">Docs</a> ·
+  <a href="https://github.com/skyline019/AuroraFiles/releases">Releases</a>
+</p>
 
-- **Real disk** — drives, user folders, copy / cut / paste / rename / trash (Recycle Bin)
-- **Views** — grid, list, columns, gallery (files-only toggle)
-- **Search** — deep walk + prefix index (cancelable / single-flight)
-- **Preview** — images (incl. HEIC/TIFF/AVIF/RAW via bundled ffmpeg), video posters, Office (DOCX/XLSX), **PPTX slide canvas**
-- **UX** — tabs, Quick Look (Space), command palette, dark mode, index prefs
+---
+
+Aurora Files is a desktop file manager for **Windows x64**, built with Electron + React. It talks to the real filesystem (not a toy sandbox), keeps a volume search index in the background, and aims for the calm density of Finder — tabs, Quick Look, gallery, and a command palette.
+
+> Prefer trying the UI in a browser first? `npm run dev` loads a **demo disk**. The desktop app (`npm run desktop`) is the real thing.
 
 ## Screenshots
 
-_Add product screenshots here after first public cut._
+| Grid | List |
+|:---:|:---:|
+| ![Grid view](docs/assets/desktop-grid.png) | ![List view](docs/assets/view-list.png) |
+
+| Columns | Gallery |
+|:---:|:---:|
+| ![Columns view](docs/assets/view-columns.png) | ![Gallery view](docs/assets/view-gallery.png) |
+
+| Index prefs | Quick Look |
+|:---:|:---:|
+| ![Index panel](docs/assets/index-panel.png) | ![Quick Look](docs/assets/quicklook.png) |
 
 ## Install
 
-Download the latest **unsigned** Windows build from [Releases](https://github.com/skyline019/AuroraFiles/releases):
+Grab the latest **unsigned** build from [Releases](https://github.com/skyline019/AuroraFiles/releases):
 
-| Artifact | Use |
+| Artifact | What it is |
 |---|---|
-| `AuroraFiles-Setup-*.exe` | NSIS installer |
-| `AuroraFiles-Portable-*.exe` | Portable |
+| `AuroraFiles-Setup-*.exe` | NSIS installer (~148 MB, includes ffmpeg) |
+| `AuroraFiles-Portable-*.exe` | Portable, no install |
 
-Windows may warn on SmartScreen until the binary is code-signed.
+Windows SmartScreen may warn until the app is code-signed — that’s expected for early builds. Release notes: [v0.1.3](docs/RELEASE_NOTES_v0.1.3.md).
 
-## Develop
+## Features
+
+- **Real disk** — drives, Libraries-style folders, copy / cut / paste / rename / Recycle Bin
+- **Four views** — grid, list, columns, gallery (files-only toggle)
+- **Search** — cancelable deep search over a resident / FTS-backed index
+- **Dual-track indexing** — **UI** track keeps the shell responsive while building; **Perf** track is for throughput benches ([details](docs/index-tracks.md))
+- **Preview** — images (JPEG/PNG/WebP/BMP + HEIC/TIFF/AVIF/RAW via bundled ffmpeg), video posters, DOCX / XLSX, PPTX slide canvas; CJK paths supported ([details](docs/preview-media.md))
+- **Desktop UX** — tabs, Quick Look (`Space`), command palette, dark mode, index strategy panel
+
+## Development
+
+Requires **Node 22+** and Windows for the full desktop path.
 
 ```bash
+git clone https://github.com/skyline019/AuroraFiles.git
+cd AuroraFiles
 npm ci
-npm run ffmpeg:ensure    # bundled ffmpeg for media decode (mirror by default)
-npm run desktop          # Electron + Vite HMR (real disk)
-npm run dev              # browser demo disk only
+npm run ffmpeg:ensure   # download bundled ffmpeg if missing
+npm run desktop         # Electron + Vite HMR (real disk)
+# npm run dev           # browser demo disk only
 ```
 
-### Scripts
+### Common scripts
 
 | Command | Purpose |
 |---|---|
-| `npm run typecheck` | TypeScript |
-| `npm test` | Vitest unit suite |
-| `npm run test:e2e` | Playwright (demo UX + preview) |
-| `npm run test:real-search` | Real-disk search assert (Windows) |
-| `npm run test:smoke-win` | `win-unpacked` smoke (SKIP if missing) |
-| `npm run build:desktop` | NSIS + portable (unsigned) |
+| `npm test` | Vitest |
+| `npm run test:e2e` | Playwright |
+| `npm run test:e2e:full-gui` | Full GUI screenshots + video |
+| `npm run test:perf-startup` | Cold-start gates |
+| `npm run test:perf-volume` | Volume index (Perf track) |
+| `npm run native:indexd` | Build Rust `aurora-indexd` |
+| `npm run build:desktop` | Unsigned NSIS + portable |
 
-### ffmpeg fetch policy
+Packaging, updater, and smoke gates: [`docs/RELEASE.md`](docs/RELEASE.md).
 
-Binary install is **mirror XOR proxy** — never both:
+### ffmpeg
+
+Desktop media decode ships **ffmpeg-static** (GPL). Install policy is **mirror XOR proxy** — never both:
 
 ```bash
-# default: npmmirror, proxies cleared
 npm run ffmpeg:ensure
-
-# or proxy → GitHub releases
 # FFMPEG_FETCH=proxy HTTPS_PROXY=http://127.0.0.1:10808 npm run ffmpeg:ensure
 ```
 
-Bundled ffmpeg is **GPL**. See `node_modules/ffmpeg-static/LICENSE` after install.
+Packaged binary lands at `resources/ffmpeg/ffmpeg.exe`.
 
-## Architecture (short)
+## Architecture
 
 ```
-src/          React UI + Zustand
-electron/     Main process, FS IPC, index, updater, ffmpeg path
-shared/       Cross-process helpers (if any)
-e2e/          Playwright
+src/        React UI + Zustand
+electron/   Main process · FS IPC · index · media · updater
+shared/     aurora-file URL + MIME (main + renderer)
+native/     aurora-indexd · walk-bench · mft-enum
+e2e/        Playwright
+docs/       Specs · ledger · release notes
 ```
 
-Index stack lives under `electron/index/` (RB-tree / FTS / optional USN). Preview Office/PPTX is dynamically imported to keep the first paint light.
+Index stack: Electron orchestrator → optional [`aurora-indexd`](docs/indexd-resident.md) → WalkEngine (`mft → rust → js`) → FTS5 sidecar → hydrate-first reopen. Everyday builds use the **UI** index track; volume benches use **Perf**.
+
+## Documentation
+
+| Doc | Topic |
+|---|---|
+| [docs/README.md](docs/README.md) | Doc index |
+| [docs/index-tracks.md](docs/index-tracks.md) | UI / Perf indexing tracks |
+| [docs/preview-media.md](docs/preview-media.md) | Preview pipeline & CJK paths |
+| [docs/indexd-resident.md](docs/indexd-resident.md) | Resident Rust index |
+| [docs/perf-ledger.md](docs/perf-ledger.md) | Optimization ledger |
+| [docs/RELEASE.md](docs/RELEASE.md) | Build & release |
 
 ## CI
 
-GitHub Actions (`.github/workflows/ci.yml`) is strict:
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml):
 
-1. **test** (Ubuntu) — typecheck, unit, index bench, web + electron renderer build  
-2. **windows-gate** — typecheck, unit, real-search, Playwright e2e  
-3. **package-win** (push to `main`) — unsigned desktop build + required smoke + artifacts  
+1. **test** (Ubuntu) — typecheck, unit, index bench, renderer builds  
+2. **windows-gate** — typecheck, unit, real-disk search, Playwright  
+3. **package-win** (`main`) — unsigned desktop package + smoke artifact  
 
-PRs must pass `test` + `windows-gate`.
+PRs need `test` + `windows-gate` green.
+
+## Contributing
+
+Issues and PRs are welcome. Please keep changes focused, run `npm test` (and Windows e2e when touching shell / index / preview), and prefer linking perf claims to `docs/perf-ledger.md` or a `perf-out/` run id.
 
 ## License
 
-[MIT](LICENSE) © 2026 skyline019  
+[MIT](LICENSE) © 2026 [skyline019](https://github.com/skyline019)
 
-Third-party: Electron/Chromium and **ffmpeg-static** (GPL) ship with desktop builds — comply with their terms when redistributing binaries.
+Desktop builds also redistribute **Electron/Chromium** and **ffmpeg-static** (GPL). If you redistribute binaries, follow their terms.

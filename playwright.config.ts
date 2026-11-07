@@ -19,5 +19,12 @@ export default defineConfig({
     url: 'http://127.0.0.1:5173',
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
+    // Never inherit AURORA_ELECTRON=1 from agent shells — that swaps in AppElectron
+    // and leaves the demo Vite server stuck on「正在连接本机磁盘…」.
+    env: {
+      ...process.env,
+      AURORA_ELECTRON: '',
+    },
   },
 });
+

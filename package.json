@@ -1,7 +1,7 @@
 {
   "name": "aurora-files",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.3",
   "description": "Aurora Files — Apple-style file manager for Windows (Electron + real disk)",
   "author": "Aurora",
   "type": "module",
@@ -25,11 +25,29 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
+    "test:e2e:index": "playwright test e2e/index-status.spec.ts",
+    "test:e2e:full-gui": "cross-env AURORA_PERF_RUN_ID=gui-full-latest playwright test e2e/full-gui.spec.ts",
+    "test:e2e:all-visual": "cross-env AURORA_ELECTRON= AURORA_PERF_RUN_ID=gui-full-latest playwright test e2e/full-gui.spec.ts e2e/ui-visual-check.spec.ts e2e/index-status.spec.ts e2e/demo-ux.spec.ts e2e/preview-media.spec.ts",
     "test:e2e:ui": "playwright test --ui",
     "test:smoke-win": "node scripts/win-unpacked-smoke.mjs",
     "test:real-search": "node scripts/real-search-e2e.mjs --assert",
     "test:index-bench": "node scripts/index-bench.mjs",
     "test:index-bench:json": "node scripts/index-bench.mjs --json release/index-bench.json",
+    "test:perf-backend": "node scripts/perf/measure-backend.mjs",
+    "test:perf-ui": "playwright test e2e/perf-baseline.spec.ts",
+    "test:perf-ui-visual": "playwright test e2e/ui-visual-check.spec.ts",
+    "test:perf-baseline": "node scripts/perf/run-baseline.mjs",
+    "test:perf-real": "node scripts/perf/measure-real-disk.mjs",
+    "test:perf-volume": "node scripts/perf/measure-volume.mjs",
+    "test:perf-diff": "node scripts/perf/measure-diff.mjs",
+    "test:perf-bakeoff": "node scripts/perf/run-bakeoff.mjs",
+    "test:perf-bakeoff:elevated": "node scripts/perf/bakeoff-elevated.mjs",
+    "test:perf-hydrate": "node scripts/perf/measure-hydrate.mjs",
+    "test:perf-indexd": "cargo build --release --manifest-path native/indexd/Cargo.toml && node --expose-gc scripts/perf/measure-indexd.mjs",
+    "test:perf-startup": "node scripts/perf/measure-startup.mjs",
+    "native:walk-bench": "cargo build --release --manifest-path native/walk-bench/Cargo.toml",
+    "native:indexd": "cargo build --release --manifest-path native/indexd/Cargo.toml",
+    "native:mft-enum": "cmake -S native/mft-enum -B native/mft-enum/build -G \"Visual Studio 18 2026\" -A x64 && cmake --build native/mft-enum/build --config Release",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
@@ -57,11 +75,47 @@
       "dist/**/*",
       "electron/**/*",
       "shared/**/*",
-      "package.json"
+      "package.json",
+      "!electron/**/*.test.ts",
+      "!shared/**/*.test.ts",
+      "!node_modules/**/*",
+      "node_modules/electron-updater/**/*",
+      "node_modules/builder-util-runtime/**/*",
+      "node_modules/fs-extra/**/*",
+      "node_modules/jsonfile/**/*",
+      "node_modules/universalify/**/*",
+      "node_modules/graceful-fs/**/*",
+      "node_modules/lazy-val/**/*",
+      "node_modules/lodash.escaperegexp/**/*",
+      "node_modules/lodash.isequal/**/*",
+      "node_modules/sax/**/*",
+      "node_modules/semver/**/*",
+      "node_modules/tiny-typed-emitter/**/*",
+      "node_modules/debug/**/*",
+      "node_modules/ms/**/*",
+      "node_modules/js-yaml/**/*",
+      "node_modules/argparse/**/*"
     ],
     "asarUnpack": [
-      "electron/index/usn-read.ps1",
-      "node_modules/ffmpeg-static/**"
+      "electron/index/usn-read.ps1"
+    ],
+    "extraResources": [
+      {
+        "from": "node_modules/ffmpeg-static/ffmpeg.exe",
+        "to": "ffmpeg/ffmpeg.exe"
+      },
+      {
+        "from": "native/indexd/target/release/aurora-indexd.exe",
+        "to": "native/aurora-indexd.exe"
+      },
+      {
+        "from": "native/walk-bench/target/release/aurora-walk-bench.exe",
+        "to": "native/aurora-walk-bench.exe"
+      },
+      {
+        "from": "native/mft-enum/build/Release/aurora-mft-enum.exe",
+        "to": "native/aurora-mft-enum.exe"
+      }
     ],
     "win": {
       "target": [

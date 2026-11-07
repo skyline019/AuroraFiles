@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { Film, FileWarning, Loader2, ExternalLink } from 'lucide-react';
 import { FSNode, kindLabel } from '@/lib/fs';
 import { loadPreview, PreviewPayload, canInlinePreview } from '@/lib/preview';
@@ -67,10 +67,12 @@ export function PreviewPane({ node, absPath, className, compact }: Props) {
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState<{ pct: number; label?: string } | null>(null);
   const [sheetIdx, setSheetIdx] = useState(0);
+  const convertTried = useRef(false);
   const canOpen = !!absPath || node.kind === 'file';
 
   useEffect(() => {
     let alive = true;
+    convertTried.current = false;
     setSheetIdx(0);
     setProgress(null);
     if (!canInlinePreview(node.name) && !node.imageUrl && node.content === undefined) {
@@ -108,7 +110,50 @@ export function PreviewPane({ node, absPath, className, compact }: Props) {
     return () => { alive = false; };
   }, [node.id, node.modifiedAt, node.imageUrl, node.content, absPath, compact, node.name]);
 
+  const retryConvert = (failedUrl?: string) => {
+    if (
+      !absPath
+      || !/^[A-Za-z]:[\\/]/.test(absPath)
+      || convertTried.current
+      || (failedUrl && failedUrl.startsWith('data:'))
+    ) {
+      setData({ kind: 'image', error: '图片无法解码或已损坏' });
+      return;
+    }
+    convertTried.current = true;
+    setLoading(true);
+    void import('@/lib/aurora')
+      .then(({ api }) => api().imagePreview(absPath, { maxEdge: 2048 }))
+      .then((conv) => {
+        if (conv?.url) {
+          setData({ kind: 'image', url: conv.url, meta: conv.meta || 'retry→jpeg' });
+        } else {
+          setData({ kind: 'image', error: '图片无法解码或转码失败' });
+        }
+      })
+      .catch(() => setData({ kind: 'image', error: '图片无法解码或已损坏' }))
+      .finally(() => setLoading(false));
+  };
+
   const maxH = compact ? 'max-h-[160px]' : 'max-h-[56vh]';
+  const embeddedImg = node.imageUrl || node.thumbUrl || null;
+
+  // Instant paint when node already carries a preview URL (demo / hydrated thumbs)
+  if (embeddedImg && (loading || !data || data.kind === 'image')) {
+    const src = data?.kind === 'image' && data.url ? data.url : embeddedImg;
+    return (
+      <div className={cn('flex items-center justify-center', className)}>
+        <img
+          data-testid="preview-embedded-img"
+          src={src}
+          alt={node.name}
+          decoding="async"
+          className={cn(maxH, 'max-w-full rounded-lg object-contain shadow-xl')}
+          onError={() => retryConvert(src)}
+        />
+      </div>
+    );
+  }
 
   if (loading) {
     const pct = progress?.pct ?? 0;
@@ -150,7 +195,7 @@ export function PreviewPane({ node, absPath, className, compact }: Props) {
           src={data.url}
           alt={node.name}
           className={cn(maxH, 'max-w-full rounded-lg object-contain shadow-xl')}
-          onError={() => setData({ kind: 'image', error: '图片无法解码或已损坏' })}
+          onError={() => retryConvert(data.url)}
         />
       </div>
     );

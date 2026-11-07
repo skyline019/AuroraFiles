@@ -44,6 +44,8 @@ function MenuPanel({ items, x, y, onClose }: { items: MItem[]; x: number; y: num
       style={{ left: pos.x, top: pos.y }}
       className="fixed z-[95] min-w-[218px] rounded-xl border border-black/[.09] bg-white/[.92] p-1 shadow-2xl shadow-black/25 backdrop-blur-2xl dark:border-white/[.12] dark:bg-[#2c2c2e]/[.94]"
       onContextMenu={(e) => e.preventDefault()}
+      data-testid="context-menu"
+      role="menu"
     >
       {items.map((it, i) => it.sep ? (
         <div key={i} className="mx-2.5 my-1 h-px bg-black/[.07] dark:bg-white/[.1]" />
@@ -302,6 +304,9 @@ export function QuickLook() {
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
       className="fixed inset-0 z-[70] flex items-center justify-center bg-black/35 p-8 backdrop-blur-[6px]"
       onClick={() => s.setQuickLook(null)}
+      data-testid="quicklook"
+      role="dialog"
+      aria-label="快速查看"
     >
       <motion.div
         initial={{ scale: 0.82, opacity: 0, y: 24 }}
@@ -359,6 +364,9 @@ export function InfoPanel() {
       exit={{ opacity: 0, x: 24, scale: 0.97 }}
       transition={{ type: 'spring', stiffness: 420, damping: 34 }}
       className="absolute right-3 top-[104px] z-[60] flex max-h-[calc(100%-130px)] w-[300px] flex-col overflow-hidden rounded-2xl border border-black/[.08] bg-white/[.94] shadow-2xl shadow-black/20 backdrop-blur-2xl dark:border-white/[.12] dark:bg-[#2a2a2c]/[.95]"
+      data-testid="info-panel"
+      role="dialog"
+      aria-label="属性"
     >
       <div className="flex items-center justify-between border-b border-black/[.06] px-4 py-2 dark:border-white/[.08]">
         <span className="text-[12px] font-semibold text-zinc-500 dark:text-zinc-400">显示简介</span>
@@ -472,7 +480,7 @@ export function BatchRename() {
   const inputCls = 'w-full rounded-lg bg-black/[.05] px-2.5 py-1.5 text-[13px] text-zinc-800 outline-none ring-1 ring-black/[.04] transition-shadow focus:ring-2 focus:ring-[#0a84ff]/60 dark:bg-white/[.07] dark:text-zinc-100';
 
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 z-[65] flex items-center justify-center bg-black/25 backdrop-blur-[3px]" onClick={() => s.setBatch(false)}>
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 z-[65] flex items-center justify-center bg-black/25 backdrop-blur-[3px]" onClick={() => s.setBatch(false)} data-testid="batch-rename" role="dialog" aria-label="批量重命名">
       <motion.div
         initial={{ scale: 0.92, y: 16, opacity: 0 }} animate={{ scale: 1, y: 0, opacity: 1 }} exit={{ scale: 0.94, opacity: 0 }}
         transition={{ type: 'spring', stiffness: 400, damping: 30 }}
@@ -615,7 +623,7 @@ export function CommandPalette() {
   const runCmd = (c?: Cmd) => { if (!c) return; s.setPalette(false); setTimeout(c.run, 30); };
 
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 z-[75] flex items-start justify-center bg-black/25 pt-[9%] backdrop-blur-[3px]" onClick={() => s.setPalette(false)}>
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 z-[75] flex items-start justify-center bg-black/25 pt-[9%] backdrop-blur-[3px]" onClick={() => s.setPalette(false)} data-testid="command-palette" role="dialog" aria-label="命令面板">
       <motion.div
         initial={{ scale: 0.95, y: -14, opacity: 0 }} animate={{ scale: 1, y: 0, opacity: 1 }} exit={{ scale: 0.96, opacity: 0 }}
         transition={{ type: 'spring', stiffness: 420, damping: 32 }}
@@ -694,7 +702,7 @@ export function ShortcutsHelp() {
   const s = useStore();
   if (!s.shortcutsOpen) return null;
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 z-[75] flex items-center justify-center bg-black/25 backdrop-blur-[3px]" onClick={() => s.setShortcuts(false)}>
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 z-[75] flex items-center justify-center bg-black/25 backdrop-blur-[3px]" onClick={() => s.setShortcuts(false)} data-testid="shortcuts-help" role="dialog" aria-label="键盘快捷键">
       <motion.div
         initial={{ scale: 0.93, y: 16 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, opacity: 0 }}
         transition={{ type: 'spring', stiffness: 400, damping: 30 }}
@@ -734,11 +742,11 @@ function readDemoPrefs(): { maxScan: number; excludeNames: string[] } {
   try {
     const j = JSON.parse(localStorage.getItem(DEMO_PREFS_KEY) || '{}');
     return {
-      maxScan: Math.min(2_000_000, Math.max(5_000, Number(j.maxScan) || 120_000)),
+      maxScan: Math.min(50_000_000, Math.max(5_000, Number(j.maxScan) || 2_000_000)),
       excludeNames: Array.isArray(j.excludeNames) ? j.excludeNames.map(String) : [],
     };
   } catch {
-    return { maxScan: 120_000, excludeNames: [] };
+    return { maxScan: 2_000_000, excludeNames: [] };
   }
 }
 
@@ -754,6 +762,7 @@ export function IndexPanel() {
     usnReadable?: boolean | null;
     maxScan?: number;
     excludeNames?: string[];
+    indexTrack?: 'ui' | 'perf';
     builtinSkip?: string[];
     dirtyDirs?: number;
     pendingDelta?: number;
@@ -763,8 +772,9 @@ export function IndexPanel() {
     usn?: { journalId?: string; nextUsn?: number } | null;
   } | null>(null);
   const [busy, setBusy] = useState(false);
-  const [maxScanDraft, setMaxScanDraft] = useState('120000');
+  const [maxScanDraft, setMaxScanDraft] = useState('2000000');
   const [excludeDraft, setExcludeDraft] = useState('');
+  const [trackDraft, setTrackDraft] = useState<'ui' | 'perf'>('ui');
   const [prefsDirty, setPrefsDirty] = useState(false);
 
   useEffect(() => {
@@ -776,6 +786,7 @@ export function IndexPanel() {
           const prefs = await api().indexPrefs();
           setMaxScanDraft(String(prefs.maxScan));
           setExcludeDraft((prefs.excludeNames || []).join('\n'));
+          setTrackDraft(prefs.indexTrack === 'perf' ? 'perf' : 'ui');
           setPrefsDirty(false);
           if (s.indexRoot) {
             const st = await api().indexStatus(s.indexRoot);
@@ -800,17 +811,21 @@ export function IndexPanel() {
   const real = isElectron() && s.fsMode === 'real';
 
   const savePrefs = async () => {
-    const maxScan = Math.min(2_000_000, Math.max(5_000, parseInt(maxScanDraft, 10) || 120_000));
+    const parsed = parseInt(maxScanDraft, 10);
+    const maxScan = Number.isFinite(parsed) && parsed <= 0
+      ? 50_000_000
+      : Math.min(50_000_000, Math.max(5_000, parsed || 2_000_000));
     const excludeNames = excludeDraft.split(/[\n,;]+/).map((x) => x.trim()).filter(Boolean);
     setBusy(true);
     try {
       if (real) {
-        const saved = await api().setIndexPrefs({ maxScan, excludeNames });
+        const saved = await api().setIndexPrefs({ maxScan, excludeNames, indexTrack: trackDraft });
         setMaxScanDraft(String(saved.maxScan));
         setExcludeDraft(saved.excludeNames.join('\n'));
+        setTrackDraft(saved.indexTrack === 'perf' ? 'perf' : 'ui');
         s.toast('索引策略已保存 · 重建后生效');
       } else {
-        localStorage.setItem(DEMO_PREFS_KEY, JSON.stringify({ maxScan, excludeNames }));
+        localStorage.setItem(DEMO_PREFS_KEY, JSON.stringify({ maxScan, excludeNames, indexTrack: trackDraft }));
         s.toast('演示模式已保存策略（真盘生效）', 'info');
       }
       setPrefsDirty(false);
@@ -829,12 +844,20 @@ export function IndexPanel() {
     if (prefsDirty) await savePrefs();
     setBusy(true);
     try {
-      const maxScan = Math.min(2_000_000, Math.max(5_000, parseInt(maxScanDraft, 10) || 120_000));
-      await api().ensureIndex(s.indexRoot, { maxDepth: 10, maxScan, rebuild: true });
+      const parsed = parseInt(maxScanDraft, 10);
+      const maxScan = Number.isFinite(parsed) && parsed <= 0
+        ? 50_000_000
+        : Math.min(50_000_000, Math.max(5_000, parsed || 2_000_000));
+      await api().ensureIndex(s.indexRoot, {
+        maxDepth: 64,
+        maxScan,
+        rebuild: true,
+        track: trackDraft,
+      });
       await s.refreshIndexStatus();
       const st = await api().indexStatus(s.indexRoot);
       setDetail(st);
-      s.toast('已触发索引重建');
+      s.toast(trackDraft === 'perf' ? '已触发 Perf 轨重建（吞吐优先）' : '已触发 UI 轨重建（保交互）');
     } catch (err) {
       s.toast((err as Error).message || '重建失败', 'error');
     } finally {
@@ -883,8 +906,8 @@ export function IndexPanel() {
           </p>
         )}
 
-        {real && (
-          <p className="mb-3 text-[12.5px] text-zinc-500">
+        {(real || s.indexInfo) && (
+          <p className="mb-3 text-[12.5px] text-zinc-500" data-testid="index-panel-summary">
             {indexStatusLabel(s.indexInfo) || '尚未建立索引'}
             {s.indexRoot ? ` · 当前卷 ${s.indexRoot}` : ''}
           </p>
@@ -918,22 +941,56 @@ export function IndexPanel() {
             />
             <Row label="落盘缓存" value={info?.disk?.exists ? `是${info.disk.deltaLines ? ` · Δ${info.disk.deltaLines}` : ''}` : '仅内存'} />
             <Row label="脏目录 / 待追赶" value={`${detail?.dirtyDirs ?? 0} / ${detail?.pendingDelta ?? 0}`} />
+            <Row
+              label="建索轨"
+              value={
+                (detail?.indexTrack || trackDraft) === 'perf'
+                  ? 'Perf · 冲吞吐'
+                  : 'UI · 保交互'
+              }
+            />
           </div>
         )}
 
         <div className="space-y-3 rounded-xl border border-black/[.06] p-3 dark:border-white/[.08]" data-testid="index-prefs-form">
+          <fieldset className="block text-[12px] font-medium text-zinc-600 dark:text-zinc-300">
+            <legend className="mb-1.5">建索轨（UI / Perf 分轨）</legend>
+            <div className="flex gap-2" role="radiogroup" aria-label="建索轨">
+              {([
+                { id: 'ui' as const, title: 'UI · 保交互', hint: '低并发，建索时可操作界面' },
+                { id: 'perf' as const, title: 'Perf · 冲吞吐', hint: '高并发，适合后台/压测' },
+              ]).map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={trackDraft === opt.id}
+                  data-testid={`index-track-${opt.id}`}
+                  onClick={() => { setTrackDraft(opt.id); setPrefsDirty(true); }}
+                  className={
+                    trackDraft === opt.id
+                      ? 'flex-1 rounded-lg border border-[#0a84ff]/40 bg-[#0a84ff]/[.12] px-2.5 py-2 text-left'
+                      : 'flex-1 rounded-lg border border-black/[.08] bg-white px-2.5 py-2 text-left dark:border-white/[.12] dark:bg-[#1f1f22]'
+                  }
+                >
+                  <span className="block text-[12.5px] font-semibold text-zinc-800 dark:text-zinc-100">{opt.title}</span>
+                  <span className="mt-0.5 block text-[11px] font-normal text-zinc-400">{opt.hint}</span>
+                </button>
+              ))}
+            </div>
+          </fieldset>
           <label className="block text-[12px] font-medium text-zinc-600 dark:text-zinc-300">
             单卷扫描上限（maxScan）
             <input
               type="number"
-              min={5000}
-              max={2000000}
-              step={5000}
+              min={0}
+              max={50000000}
+              step={100000}
               value={maxScanDraft}
               onChange={(e) => { setMaxScanDraft(e.target.value); setPrefsDirty(true); }}
               className="mt-1 w-full rounded-lg border border-black/[.08] bg-white px-2.5 py-1.5 text-[13px] tabular text-zinc-800 outline-none focus-visible:ring-2 focus-visible:ring-[#0a84ff] dark:border-white/[.12] dark:bg-[#1f1f22] dark:text-zinc-100"
             />
-            <span className="mt-0.5 block text-[11px] font-normal text-zinc-400">建议 5 万–50 万；过大将拖慢首建索</span>
+            <span className="mt-0.5 block text-[11px] font-normal text-zinc-400">默认 200 万；填 0 视为不截断（上限 5000 万）。过大仅略增首建索时间</span>
           </label>
           <label className="block text-[12px] font-medium text-zinc-600 dark:text-zinc-300">
             额外排除目录名（每行一个）
@@ -1021,7 +1078,7 @@ export function IndexPanel() {
         )}
 
         <p className="mt-3 text-[11px] leading-relaxed text-zinc-400">
-          大盘可能因截断上限未覆盖全部文件；深度搜索优先走内存/FTS。修改策略后请重建索引。
+          深度搜索优先走内存/FTS。修改扫描上限后请点「重建索引」生效；填 0 可尽量扫完全卷。
         </p>
       </motion.div>
     </motion.div>
@@ -1032,7 +1089,10 @@ export function IndexPanel() {
 export function Toasts() {
   const toasts = useStore(st => st.toasts);
   return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-12 z-[90] flex flex-col items-center gap-2">
+    <div
+      className="pointer-events-none absolute inset-x-0 bottom-[42px] z-[90] flex flex-col items-center gap-2 px-4"
+      data-testid="toast-stack"
+    >
       <AnimatePresence>
         {toasts.map(t => (
           <motion.div
@@ -1041,7 +1101,7 @@ export function Toasts() {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 8, scale: 0.95 }}
             transition={{ type: 'spring', stiffness: 480, damping: 30 }}
-            className="flex items-center gap-2 rounded-full bg-zinc-800/[.92] py-2 pl-3 pr-4 text-[12.5px] font-medium text-white shadow-xl backdrop-blur dark:bg-white/[.92] dark:text-zinc-800"
+            className="flex max-w-[min(420px,92vw)] items-center gap-2 rounded-full bg-zinc-800/[.92] py-2 pl-3 pr-4 text-[12.5px] font-medium text-white shadow-xl backdrop-blur dark:bg-white/[.92] dark:text-zinc-800"
           >
             {t.kind === 'error' ? (
               <AlertCircle size={14} className="text-red-400 dark:text-red-600" />

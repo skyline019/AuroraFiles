@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, memo } from 'react';
 import {
   Music, Film, Archive, Code2, FileText, Image as ImageIcon, Table2, Presentation,
   FileType, Type, Database, FileCog, Link2, File, AppWindow, Star, Clock, Monitor,
 } from 'lucide-react';
 import { FSNode, ID, extOf, categoryOf, tagHex } from '@/lib/fs';
-import { resolveImageThumbUrl, resolveVideoThumbUrl } from '@/lib/mediaThumb';
+import { convertImageThumbUrl, resolveImageThumbUrl, resolveVideoThumbUrl } from '@/lib/mediaThumb';
+import { enqueueThumbJob } from '@/lib/thumbBudget';
 
 // ── macOS 风文件夹 ──────────────────────────────────────────
 export function FolderIcon({ size, tint = '#58a6f5' }: { size: number; tint?: string }) {
@@ -75,19 +76,49 @@ function Squircle({ size, from, to, children }: { size: number; from: string; to
   );
 }
 
-function Thumb({ url, size, rounded = 6 }: { url: string; size: number; rounded?: number }) {
+function Thumb({
+  url,
+  size,
+  rounded = 6,
+  convertPath,
+}: {
+  url: string;
+  size: number;
+  rounded?: number;
+  /** aurora-file 解码失败时走主进程转 JPEG */
+  convertPath?: string | null;
+}) {
+  const [src, setSrc] = useState(url);
   const [err, setErr] = useState(false);
+  const converting = useRef(false);
+
+  useEffect(() => {
+    setSrc(url);
+    setErr(false);
+    converting.current = false;
+  }, [url]);
+
   if (err) {
     return <Squircle size={size} from="#c084fc" to="#8b5cf6"><ImageIcon size={size * 0.5} strokeWidth={1.8} /></Squircle>;
   }
   return (
     <img
-      src={url}
+      src={src}
       alt=""
       loading="lazy"
       decoding="async"
       draggable={false}
-      onError={() => setErr(true)}
+      onError={() => {
+        if (convertPath && !src.startsWith('data:') && !converting.current) {
+          converting.current = true;
+          void convertImageThumbUrl(convertPath, 512).then((u) => {
+            if (u) setSrc(u);
+            else setErr(true);
+          });
+          return;
+        }
+        setErr(true);
+      }}
       className="object-cover bg-zinc-200 dark:bg-zinc-700"
       style={{ width: size, height: size, borderRadius: rounded, boxShadow: '0 0 0 1px rgba(0,0,0,.12), 0 2px 6px rgba(0,0,0,.18)' }}
     />
@@ -99,56 +130,98 @@ function GlyphFallback({ size, from, to, Icon }: {
   return <Squircle size={size} from={from} to={to}><Icon size={size * 0.5} strokeWidth={1.8} /></Squircle>;
 }
 
-/** 图片缩略：原生直链；TIFF/AVIF/HEIF/RAW 经 ffmpeg */
-export function ImageThumb({ node, size, rounded = 6 }: { node: FSNode; size: number; rounded?: number }) {
-  const embedded = node.thumbUrl ?? node.imageUrl ?? null;
+/** Resolve only when near viewport; queue through thumbBudget concurrency cap. */
+function useLazyThumbUrl(
+  embedded: string | null,
+  resolve: () => Promise<string | null>,
+  deps: unknown[],
+) {
+  const hostRef = useRef<HTMLSpanElement | null>(null);
   const [url, setUrl] = useState<string | null>(embedded);
+  const [visible, setVisible] = useState(!!embedded);
 
   useEffect(() => {
-    let cancelled = false;
     if (embedded) {
       setUrl(embedded);
+      setVisible(true);
       return;
     }
     setUrl(null);
-    void resolveImageThumbUrl(node.id, node.name, null).then((u) => {
-      if (!cancelled) setUrl(u);
-    });
-    return () => { cancelled = true; };
-  }, [node.id, node.name, embedded]);
+    const el = hostRef.current;
+    if (!el || typeof IntersectionObserver === 'undefined') {
+      setVisible(true);
+      return;
+    }
+    let seen = false;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          seen = true;
+          setVisible(true);
+          io.disconnect();
+        }
+      },
+      { rootMargin: '120px' },
+    );
+    io.observe(el);
+    return () => {
+      io.disconnect();
+      if (!seen) setVisible(false);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [embedded, ...deps]);
 
-  if (!url) return <GlyphFallback size={size} from="#c084fc" to="#8b5cf6" Icon={ImageIcon} />;
-  return <Thumb url={url} size={size} rounded={rounded} />;
+  useEffect(() => {
+    if (embedded || !visible) return;
+    const job = enqueueThumbJob(resolve);
+    void job.promise.then((u) => {
+      if (u) setUrl(u);
+    });
+    return () => job.cancel();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, embedded, ...deps]);
+
+  return { hostRef, url };
 }
 
-/** 视频封面缩略：演示 thumbUrl → ffmpeg 抽帧；失败回退 Film 图标 */
+/** 图片缩略：原生直链；TIFF/AVIF/HEIF/RAW 经转码（可见后、限并发） */
+export function ImageThumb({ node, size, rounded = 6 }: { node: FSNode; size: number; rounded?: number }) {
+  // Prefer richer imageUrl (often labeled SVG in demos) over solid thumbUrl
+  const embedded = node.imageUrl ?? node.thumbUrl ?? null;
+  const { hostRef, url } = useLazyThumbUrl(
+    embedded,
+    () => resolveImageThumbUrl(node.id, node.name, null),
+    [node.id, node.name],
+  );
+  const convertPath = /^[A-Za-z]:[\\/]/.test(node.id) ? node.id : null;
+
+  return (
+    <span ref={hostRef} className="inline-flex">
+      {!url ? (
+        <GlyphFallback size={size} from="#c084fc" to="#8b5cf6" Icon={ImageIcon} />
+      ) : (
+        <Thumb url={url} size={size} rounded={rounded} convertPath={convertPath} />
+      )}
+    </span>
+  );
+}
+
+/** 视频封面缩略：可见后限并发抽帧；失败回退 Film 图标 */
 export function VideoThumb({ node, size, rounded = 6 }: { node: FSNode; size: number; rounded?: number }) {
   const embedded = node.thumbUrl ?? node.imageUrl ?? null;
-  const [url, setUrl] = useState<string | null>(embedded);
+  const { hostRef, url } = useLazyThumbUrl(
+    embedded,
+    () => resolveVideoThumbUrl(node.id),
+    [node.id],
+  );
 
-  useEffect(() => {
-    let cancelled = false;
-    if (embedded) {
-      setUrl(embedded);
-      return;
-    }
-    setUrl(null);
-    void resolveVideoThumbUrl(node.id).then((u) => {
-      if (!cancelled) setUrl(u);
-    });
-    return () => { cancelled = true; };
-  }, [node.id, embedded]);
-
-  if (!url) {
-    return (
-      <span data-testid="video-thumb-fallback" data-name={node.name}>
-        <GlyphFallback size={size} from="#a88bff" to="#6d4bd8" Icon={Film} />
-      </span>
-    );
-  }
   return (
-    <span data-testid="video-thumb" data-name={node.name}>
-      <Thumb url={url} size={size} rounded={rounded} />
+    <span ref={hostRef} data-testid={url ? 'video-thumb' : 'video-thumb-fallback'} data-name={node.name} className="inline-flex">
+      {!url ? (
+        <GlyphFallback size={size} from="#a88bff" to="#6d4bd8" Icon={Film} />
+      ) : (
+        <Thumb url={url} size={size} rounded={rounded} />
+      )}
     </span>
   );
 }
@@ -158,16 +231,26 @@ const CAT_COLOR: Record<string, string> = {
   doc: '#2b579a', sheet: '#217346', slide: '#d24726', pdf: '#e2574c', text: '#64748b',
   archive: '#c07f2e', code: '#334155', font: '#7048e8', db: '#0e7490', sys: '#75808f', link: '#0a84ff', other: '#8e8e93',
 };
-function DocIcon({ size, ext, color, Glyph }: { size: number; ext: string; color: string; Glyph: React.ComponentType<{ size?: number; strokeWidth?: number }> }) {
+function DocIcon({ size, ext, color, Glyph }: { size: number; ext: string; color: string; Glyph?: React.ComponentType<{ size?: number; strokeWidth?: number }> }) {
   return (
     <div className="relative" style={{ width: size * 0.82, height: size }}>
-      <svg viewBox="0 0 40 48" className="absolute inset-0 h-full w-full" style={{ filter: 'drop-shadow(0 1px 1px rgba(0,0,0,.16))' }}>
+      <svg viewBox="0 0 40 48" className="absolute inset-0 h-full w-full" style={{ filter: 'drop-shadow(0 1px 1px rgba(0,0,0,.16))' }} aria-hidden>
         <path d="M4 1h22l10 10v34a3 3 0 0 1-3 3H4a3 3 0 0 1-3-3V4a3 3 0 0 1 3-3Z" fill="#fdfdfe" stroke="#00000022" />
         <path d="M26 1l10 10h-9a1 1 0 0 1-1-1V1Z" fill="#00000014" />
+        {/* 轻量占位线：避免每个格子再挂 Lucide 子树（滚动热路径） */}
+        {!Glyph && (
+          <>
+            <rect x="8" y="18" width="16" height="2.2" rx="1" fill={color} opacity="0.4" />
+            <rect x="8" y="23.5" width="22" height="2.2" rx="1" fill="#00000018" />
+            <rect x="8" y="29" width="18" height="2.2" rx="1" fill="#00000014" />
+          </>
+        )}
       </svg>
-      <div className="absolute inset-x-0 flex items-center justify-center" style={{ top: '18%', height: '38%', color }}>
-        <Glyph size={size * 0.34} strokeWidth={1.9} />
-      </div>
+      {Glyph && (
+        <div className="absolute inset-x-0 flex items-center justify-center" style={{ top: '18%', height: '38%', color }}>
+          <Glyph size={size * 0.34} strokeWidth={1.9} />
+        </div>
+      )}
       {ext && (
         <div className="absolute inset-x-[12%] flex justify-center" style={{ bottom: '9%' }}>
           <span className="font-bold uppercase text-white" style={{
@@ -188,7 +271,7 @@ const GLYPHS: Record<string, React.ComponentType<{ size?: number; strokeWidth?: 
 };
 
 // ── 主分发组件 ──────────────────────────────────────────────
-export function FileGlyph({ node, size }: { node: FSNode; size: number }) {
+export const FileGlyph = memo(function FileGlyph({ node, size }: { node: FSNode; size: number }) {
   if (node.kind === 'folder') return <FolderIcon size={size} />;
   if (node.kind === 'drive') return <DriveIcon size={size} removable={node.drive?.removable} />;
   if (node.kind === 'special') {
@@ -209,9 +292,13 @@ export function FileGlyph({ node, size }: { node: FSNode; size: number }) {
   }
   if (cat === 'audio') return <Squircle size={size} from="#ff6482" to="#e7335e"><Music size={size * 0.5} strokeWidth={2} /></Squircle>;
   if (cat === 'video') return <VideoThumb node={node} size={size} />;
+  // 高频文档类：无 Lucide 子树，滚动时更轻
+  if (cat === 'text' || cat === 'code' || cat === 'other' || cat === 'doc') {
+    return <DocIcon size={size} ext={ext} color={CAT_COLOR[cat] ?? CAT_COLOR.other} />;
+  }
   const Glyph = GLYPHS[cat] ?? File;
   return <DocIcon size={size} ext={ext} color={CAT_COLOR[cat]} Glyph={Glyph} />;
-}
+});
 
 function CloudGlyph({ size }: { size: number }) {
   return (

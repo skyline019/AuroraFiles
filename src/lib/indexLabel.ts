@@ -17,9 +17,32 @@ export function searchSourceLabel(source?: string, cached?: boolean): string {
   return s ? s : '扫盘';
 }
 
+export type IndexChipState = 'demo' | 'building' | 'refreshing' | 'ready' | 'idle';
+
+/** Status-chip tone/state for UI + Playwright. Soft-refresh must never look like cold build. */
+export function indexChipState(
+  fsMode: 'demo' | 'real' | string | undefined,
+  info: {
+    ready?: boolean;
+    building?: boolean;
+    refreshing?: boolean;
+  } | null,
+): IndexChipState {
+  if (fsMode === 'demo') return 'demo';
+  if (!info) return 'idle';
+  if (info.ready) {
+    if (info.refreshing || info.building) return 'refreshing';
+    return 'ready';
+  }
+  if (info.building) return 'building';
+  if (info.refreshing) return 'refreshing';
+  return 'idle';
+}
+
 export function indexStatusLabel(info: {
   ready?: boolean;
   building?: boolean;
+  refreshing?: boolean;
   size?: number;
   source?: string;
   watching?: boolean;
@@ -28,19 +51,22 @@ export function indexStatusLabel(info: {
   disk?: { exists?: boolean; size?: number; deltaLines?: number };
 } | null): string {
   if (!info) return '';
-  if (info.building) {
-    const n = info.size ?? 0;
-    return n > 0 ? `索引中 · ${n.toLocaleString()} 项` : '正在建立索引…';
-  }
+  // Prefer ready copy whenever searchable — ignore stale `building` during softRefresh
   if (info.ready) {
     const n = info.size ?? 0;
     const parts = [`索引就绪 · ${n.toLocaleString()} 项`];
-    if (info.disk?.exists) parts.push(info.disk.deltaLines ? '增量落盘' : '已落盘');
+    if (info.refreshing || info.building) parts.push('同步中');
+    else if (info.disk?.exists) parts.push(info.disk.deltaLines ? '增量落盘' : '已落盘');
     else parts.push('内存');
     if (info.fts?.ok) parts.push('FTS');
     if (info.usnReadable === true) parts.push('USN');
     else if (info.watching) parts.push('监视');
     return parts.join(' · ');
   }
+  if (info.building) {
+    const n = info.size ?? 0;
+    return n > 0 ? `索引中 · ${n.toLocaleString()} 项` : '正在建立索引…';
+  }
+  if (info.refreshing) return '索引同步中…';
   return '索引未就绪';
 }

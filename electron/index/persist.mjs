@@ -34,8 +34,15 @@ function pathsFor(root) {
     dir: INDEX_DIR,
     meta: path.join(INDEX_DIR, `${id}.meta.json`),
     data: path.join(INDEX_DIR, `${id}.ndjson`),
+    /** Compact binary snapshot (preferred for native hydrate/persist) */
+    aidx: path.join(INDEX_DIR, `${id}.aidx`),
     delta: path.join(INDEX_DIR, `${id}.delta.ndjson`),
   };
+}
+
+/** Exposed for aurora-indexd hydrate/persist without loading all entries into V8 */
+export function getIndexFilePaths(root) {
+  return pathsFor(root);
 }
 
 function parseNdjson(text) {
@@ -169,18 +176,40 @@ export function diskCacheStat(root) {
     try {
       deltaBytes = fssync.statSync(p.delta).size;
     } catch { /* */ }
+    let aidxBytes = 0;
+    try { aidxBytes = fssync.statSync(p.aidx).size; } catch { /* */ }
     return {
       exists: true,
-      bytes: st.size + deltaBytes,
+      bytes: st.size + deltaBytes + aidxBytes,
       baseBytes: st.size,
+      aidxBytes,
       deltaBytes,
       deltaLines,
       savedAt: meta.savedAt,
       size: meta.size,
       usn: meta.usn,
+      backend: meta.backend || null,
     };
   } catch {
-    return { exists: false };
+    // native-only: aidx without ndjson
+    try {
+      const a = fssync.statSync(p.aidx);
+      const meta = JSON.parse(fssync.readFileSync(p.meta, 'utf8'));
+      return {
+        exists: true,
+        bytes: a.size,
+        baseBytes: 0,
+        aidxBytes: a.size,
+        deltaBytes: 0,
+        deltaLines: 0,
+        savedAt: meta.savedAt,
+        size: meta.size,
+        usn: meta.usn,
+        backend: meta.backend || 'native',
+      };
+    } catch {
+      return { exists: false };
+    }
   }
 }
 

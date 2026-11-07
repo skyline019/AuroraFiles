@@ -379,15 +379,31 @@ export function poolFor(nodes: Record<string, FSNode>, loc: Location): FSNode[] 
   return n.childrenIds.map(c => nodes[c]).filter((x): x is FSNode => !!x && !x.deleted);
 }
 
+const nameCollator = new Intl.Collator('zh-Hans-CN', { numeric: true, sensitivity: 'base' });
+
 export function sortNodes(nodes: Record<string, FSNode>, list: FSNode[], key: SortKey, dir: SortDir): FSNode[] {
   const mul = dir === 'asc' ? 1 : -1;
   const rank = (n: FSNode) => (n.kind === 'file' ? 1 : 0);
+  /** size 排序时缓存 folderSize，避免比较器里反复扫子树 */
+  const sizeCache = key === 'size' ? new Map<string, number>() : null;
+  const sizeOf = (n: FSNode) => {
+    if (n.kind === 'file') return n.size;
+    const hit = sizeCache!.get(n.id);
+    if (hit !== undefined) return hit;
+    const v = folderSize(nodes, n.id);
+    sizeCache!.set(n.id, v);
+    return v;
+  };
   const cmp = (a: FSNode, b: FSNode): number => {
     switch (key) {
-      case 'name': return a.name.localeCompare(b.name, 'zh-Hans-CN', { numeric: true, sensitivity: 'base' });
+      case 'name': return nameCollator.compare(a.name, b.name);
       case 'modified': return b.modifiedAt - a.modifiedAt;
-      case 'size': return (a.kind === 'file' ? a.size : folderSize(nodes, a.id)) - (b.kind === 'file' ? b.size : folderSize(nodes, b.id));
-      case 'kind': return kindLabel(a).localeCompare(kindLabel(b), 'zh-Hans-CN') || a.name.localeCompare(kindLabel(b), 'zh-Hans-CN', { numeric: true });
+      case 'size': return sizeOf(a) - sizeOf(b);
+      case 'kind': {
+        const ka = kindLabel(a);
+        const kb = kindLabel(b);
+        return nameCollator.compare(ka, kb) || nameCollator.compare(a.name, b.name);
+      }
     }
   };
   return [...list].sort((a, b) => {

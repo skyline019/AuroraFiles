@@ -1,6 +1,7 @@
 /**
  * 画廊 / 网格缩略图：难解码图与视频封面经 ffmpeg，带 LRU + 并发上限。
  */
+import { toAuroraFileUrl } from '../../shared/auroraFileUrl.mjs';
 import { api, isElectron } from './aurora';
 import { needsFfmpegImageDecode } from './mediaDecode';
 import { extOf } from './fs';
@@ -56,11 +57,35 @@ function realPathOf(nodeId: string): string | null {
 }
 
 export function auroraFileUrl(absPath: string): string {
-  const slash = absPath.replace(/\\/g, '/');
-  return `aurora-file:///${slash}`;
+  return toAuroraFileUrl(absPath);
 }
 
-/** 图片缩略：原生扩展直接协议；难解码走 ffmpeg（maxEdge 512） */
+/** 主进程 nativeImage/ffmpeg → JPEG data URL（缩略 / 协议解码失败兜底） */
+export async function convertImageThumbUrl(absPath: string, maxEdge = 512): Promise<string | null> {
+  if (!absPath || !isElectron()) return null;
+  const key = `img${maxEdge}:${absPath}`;
+  if (cache.has(key)) return cache.get(key) ?? null;
+  const pending = inflight.get(key);
+  if (pending) return pending;
+
+  const job = withSlot(async () => {
+    try {
+      const r = await api().imagePreview(absPath, { maxEdge });
+      const url = r?.url || null;
+      cacheSet(key, url);
+      return url;
+    } catch {
+      cacheSet(key, null);
+      return null;
+    } finally {
+      inflight.delete(key);
+    }
+  });
+  inflight.set(key, job);
+  return job;
+}
+
+/** 图片缩略：原生扩展直接协议；难解码走转码（maxEdge 512） */
 export async function resolveImageThumbUrl(
   nodeId: string,
   name: string,
@@ -74,27 +99,7 @@ export async function resolveImageThumbUrl(
   if (!needsFfmpegImageDecode(ext)) {
     return auroraFileUrl(abs);
   }
-
-  const key = `img512:${abs}`;
-  if (cache.has(key)) return cache.get(key) ?? null;
-  const pending = inflight.get(key);
-  if (pending) return pending;
-
-  const job = withSlot(async () => {
-    try {
-      const r = await api().imagePreview(abs, { maxEdge: 512 });
-      const url = r?.url || null;
-      cacheSet(key, url);
-      return url;
-    } catch {
-      cacheSet(key, null);
-      return null;
-    } finally {
-      inflight.delete(key);
-    }
-  });
-  inflight.set(key, job);
-  return job;
+  return convertImageThumbUrl(abs, 512);
 }
 
 /** 视频封面缩略（maxEdge 512） */

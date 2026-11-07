@@ -5,21 +5,37 @@ import fs from 'node:fs/promises';
 import fssync from 'node:fs';
 import path from 'node:path';
 import { getIndexDir } from './persist.mjs';
+import { normalizeTrackId } from './indexTrack.mjs';
 
-export const DEFAULT_MAX_SCAN = 120_000;
+/** 默认抬高：单卷常见 50–200 万条目；UI / clamp 上限约等于「不截断」 */
+export const DEFAULT_MAX_SCAN = 2_000_000;
 export const MIN_MAX_SCAN = 5_000;
-export const MAX_MAX_SCAN = 2_000_000;
+/** 实质解除封顶（约 5 千万）；0 / 负数 / Infinity 均映射到此值 */
+export const MAX_MAX_SCAN = 50_000_000;
 
-/** 内置永不索引的目录名（小写） */
+/** 高压整卷：仅跳过无法安全枚举的目录（含隐藏项 / 回收站都扫） */
+export const MINIMAL_SKIP = [
+  'system volume information',
+];
+
+/** 内置永不索引的目录名（小写）——含 Windows 用户配置里的毒目录/联接名 */
 export const BUILTIN_SKIP = [
   '$recycle.bin', 'system volume information', 'node_modules', '.git',
   'windows', 'windowsapps', '$windows.~bt', 'recovery',
+  // 用户配置：AppData 与历史联接名（否则扫 C:\\Users\\x 会卡死）
+  'appdata', 'application data', 'local settings', 'local low',
+  'cookies', 'recent', 'sendto', 'start menu', 'templates',
+  'nethood', 'printhood', 'temporary internet files',
+  'cache', '.cache', '.npm', '.nuget', '.local',
+  'inetcache', 'packages', 'msixvc', 'code cache', 'gpucache',
 ];
 
 const DEFAULT_PREFS = {
   maxScan: DEFAULT_MAX_SCAN,
   /** 用户追加的排除目录名（相对名，非路径） */
   excludeNames: [],
+  /** ui=保交互；perf=冲吞吐 */
+  indexTrack: 'ui',
 };
 
 let cached = null;
@@ -44,8 +60,10 @@ export function resetIndexPrefsCache() {
 }
 
 export function clampMaxScan(n) {
+  if (n === 0 || n === '0' || n === Infinity || n === 'unlimited') return MAX_MAX_SCAN;
   const v = Number(n);
   if (!Number.isFinite(v)) return DEFAULT_MAX_SCAN;
+  if (v < 0) return MAX_MAX_SCAN;
   return Math.min(MAX_MAX_SCAN, Math.max(MIN_MAX_SCAN, Math.round(v)));
 }
 
@@ -63,6 +81,14 @@ export function normalizeExcludeNames(list) {
   return out.slice(0, 64);
 }
 
+/** 历史默认 12 万会悄悄截断大盘；升级时抬到新默认（用户显式改过的保留） */
+function migrateMaxScan(raw) {
+  if (raw == null) return DEFAULT_MAX_SCAN;
+  const n = Number(raw);
+  if (n === 120_000) return DEFAULT_MAX_SCAN;
+  return clampMaxScan(n);
+}
+
 export async function loadIndexPrefs() {
   invalidateIfDirChanged();
   if (cached) return { ...cached, excludeNames: [...cached.excludeNames] };
@@ -70,8 +96,9 @@ export async function loadIndexPrefs() {
     const raw = await fs.readFile(prefsPath(), 'utf8');
     const j = JSON.parse(raw);
     cached = {
-      maxScan: clampMaxScan(j.maxScan ?? DEFAULT_MAX_SCAN),
+      maxScan: migrateMaxScan(j.maxScan),
       excludeNames: normalizeExcludeNames(j.excludeNames),
+      indexTrack: normalizeTrackId(j.indexTrack ?? DEFAULT_PREFS.indexTrack),
     };
   } catch {
     cached = { ...DEFAULT_PREFS, excludeNames: [] };
@@ -86,6 +113,9 @@ export async function saveIndexPrefs(partial = {}) {
     excludeNames: partial.excludeNames != null
       ? normalizeExcludeNames(partial.excludeNames)
       : cur.excludeNames,
+    indexTrack: partial.indexTrack != null
+      ? normalizeTrackId(partial.indexTrack)
+      : (cur.indexTrack || 'ui'),
   };
   cached = next;
   await fs.mkdir(path.dirname(prefsPath()), { recursive: true });
@@ -101,8 +131,9 @@ export function getIndexPrefsSync() {
     const raw = fssync.readFileSync(prefsPath(), 'utf8');
     const j = JSON.parse(raw);
     cached = {
-      maxScan: clampMaxScan(j.maxScan ?? DEFAULT_MAX_SCAN),
+      maxScan: migrateMaxScan(j.maxScan),
       excludeNames: normalizeExcludeNames(j.excludeNames),
+      indexTrack: normalizeTrackId(j.indexTrack ?? DEFAULT_PREFS.indexTrack),
     };
   } catch {
     cached = { ...DEFAULT_PREFS, excludeNames: [] };
@@ -110,8 +141,15 @@ export function getIndexPrefsSync() {
   return cached;
 }
 
-export function effectiveSkipSet(prefs = getIndexPrefsSync()) {
-  return new Set([...BUILTIN_SKIP, ...(prefs.excludeNames || [])]);
+/**
+ * @param {object} [prefs]
+ * @param {'builtin'|'minimal'|'none'} [mode]
+ */
+export function effectiveSkipSet(prefs = getIndexPrefsSync(), mode = 'builtin') {
+  const extra = prefs?.excludeNames || [];
+  if (mode === 'none') return new Set(extra.map((n) => String(n).toLowerCase()));
+  if (mode === 'minimal') return new Set([...MINIMAL_SKIP, ...extra.map((n) => String(n).toLowerCase())]);
+  return new Set([...BUILTIN_SKIP, ...extra]);
 }
 
 export function effectiveMaxScan(optsMax, prefs = getIndexPrefsSync()) {

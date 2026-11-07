@@ -1,6 +1,6 @@
 /**
  * SQLite FTS5 侧车：大库名称/路径检索；与内存结构并存。
- * 使用 Node 内置 node:sqlite（Electron 37 / Node 22+）。
+ * 支持事务流式写入（beginRebuild/insertFast/endRebuild），避免全量数组尖峰。
  */
 import path from 'node:path';
 import fs from 'node:fs';
@@ -37,6 +37,8 @@ export class FtsIndex {
     this.root = root;
     this.db = null;
     this.ok = false;
+    this._inRebuild = false;
+    this._batch = 0;
     if (!DatabaseSync) return;
     try {
       fs.mkdirSync(getIndexDir(), { recursive: true });
@@ -44,16 +46,24 @@ export class FtsIndex {
       this.db.exec(`
         PRAGMA journal_mode = WAL;
         PRAGMA synchronous = NORMAL;
+        PRAGMA cache_size = -2000;
+        PRAGMA temp_store = MEMORY;
         CREATE VIRTUAL TABLE IF NOT EXISTS files USING fts5(
           path UNINDEXED,
           name,
-          path_text,
           tokenize = 'unicode61'
         );
       `);
-      this.ins = this.db.prepare(
-        'INSERT INTO files(path, name, path_text) VALUES (?, ?, ?)',
-      );
+      // Compat: older DBs had path_text; prefer slim 2-col insert, fall back if needed.
+      let ins = null;
+      try {
+        ins = this.db.prepare('INSERT INTO files(path, name) VALUES (?, ?)');
+        this._ftsCols = 2;
+      } catch {
+        ins = this.db.prepare('INSERT INTO files(path, name, path_text) VALUES (?, ?, ?)');
+        this._ftsCols = 3;
+      }
+      this.ins = ins;
       this.del = this.db.prepare('DELETE FROM files WHERE path = ?');
       this.clr = this.db.prepare('DELETE FROM files');
       this.q = this.db.prepare(
@@ -68,7 +78,13 @@ export class FtsIndex {
   }
 
   close() {
-    try { this.db?.close?.(); } catch { /* */ }
+    try {
+      if (this._inRebuild) {
+        try { this.db?.exec?.('COMMIT'); } catch { /* */ }
+        this._inRebuild = false;
+      }
+      this.db?.close?.();
+    } catch { /* */ }
     this.db = null;
     this.ok = false;
   }
@@ -78,11 +94,74 @@ export class FtsIndex {
     try { this.clr.run(); } catch { /* */ }
   }
 
+  /** 开始流式重建（清空 + BEGIN） */
+  beginRebuild() {
+    if (!this.ok) return false;
+    if (this._inRebuild) return true;
+    try {
+      this.db.exec('BEGIN');
+      this.clr.run();
+      this._inRebuild = true;
+      this._batch = 0;
+      return true;
+    } catch {
+      try { this.db.exec('ROLLBACK'); } catch { /* */ }
+      this._inRebuild = false;
+      return false;
+    }
+  }
+
+  /**
+   * 事务内快速插入（不先 DELETE；用于 rebuild）
+   * @returns {boolean}
+   */
+  insertFast(entry) {
+    if (!this.ok || !entry?.path) return false;
+    try {
+      if (this._ftsCols === 3) {
+        this.ins.run(entry.path, entry.name || '', String(entry.path).toLowerCase());
+      } else {
+        this.ins.run(entry.path, entry.name || '');
+      }
+      this._batch += 1;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  endRebuild() {
+    if (!this.ok || !this._inRebuild) return false;
+    try {
+      this.db.exec('COMMIT');
+      this._inRebuild = false;
+      this._batch = 0;
+      return true;
+    } catch {
+      try { this.db.exec('ROLLBACK'); } catch { /* */ }
+      this._inRebuild = false;
+      return false;
+    }
+  }
+
+  /** 当前事务内已插入条数 */
+  rebuildBatch() {
+    return this._batch;
+  }
+
   upsert(entry) {
     if (!this.ok || !entry?.path) return;
+    if (this._inRebuild) {
+      this.insertFast(entry);
+      return;
+    }
     try {
       this.del.run(entry.path);
-      this.ins.run(entry.path, entry.name || '', String(entry.path).toLowerCase());
+      if (this._ftsCols === 3) {
+        this.ins.run(entry.path, entry.name || '', String(entry.path).toLowerCase());
+      } else {
+        this.ins.run(entry.path, entry.name || '');
+      }
     } catch { /* */ }
   }
 
@@ -93,17 +172,57 @@ export class FtsIndex {
 
   rebuild(entries) {
     if (!this.ok) return;
+    if (!this.beginRebuild()) return;
     try {
-      this.db.exec('BEGIN');
-      this.clr.run();
       for (const e of entries) {
         if (!e?.path) continue;
-        this.ins.run(e.path, e.name || '', String(e.path).toLowerCase());
+        this.insertFast(e);
       }
-      this.db.exec('COMMIT');
+      this.endRebuild();
     } catch {
       try { this.db.exec('ROLLBACK'); } catch { /* */ }
+      this._inRebuild = false;
     }
+  }
+
+  /**
+   * 按预算从 iterator/数组切片写入（错峰清偿用）
+   * @param {Iterable<object>} entries
+   * @param {{ ops?: number, already?: number }} opts
+   * @returns {number} 本片写入数
+   */
+  insertSlice(entries, opts = {}) {
+    if (!this.ok) return 0;
+    const ops = Number(opts.ops) > 0 ? Number(opts.ops) : 400;
+    let skip = Number(opts.already) || 0;
+    let n = 0;
+    let i = 0;
+    for (const e of entries) {
+      if (i < skip) {
+        i += 1;
+        continue;
+      }
+      if (n >= ops) break;
+      if (!e?.path) {
+        i += 1;
+        continue;
+      }
+      if (!this._inRebuild) {
+        try {
+          this.del.run(e.path);
+          if (this._ftsCols === 3) {
+            this.ins.run(e.path, e.name || '', String(e.path).toLowerCase());
+          } else {
+            this.ins.run(e.path, e.name || '');
+          }
+        } catch { /* */ }
+      } else {
+        this.insertFast(e);
+      }
+      n += 1;
+      i += 1;
+    }
+    return n;
   }
 
   /**

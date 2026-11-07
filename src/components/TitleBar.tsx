@@ -18,7 +18,7 @@ function Light({ bg, glyph, onClick, title }: { bg: string; glyph: React.ReactNo
   );
 }
 
-export function TitleBar({ onDragPointerDown }: { onDragPointerDown: (e: React.PointerEvent) => void }) {
+export function TitleBar({ onDragPointerDown }: { onDragPointerDown?: (e: React.PointerEvent) => void }) {
   const { tabs, activeTabId, selectTab, closeTab, addTab, moveTab, dark, toggleDark, setShortcuts, setWinState, toggleMax, sidebarOpen, toggleSidebar, nodes } = useStore();
   useActiveTab();
   const [dragIdx, setDragIdx] = useState<number | null>(null);
@@ -28,7 +28,7 @@ export function TitleBar({ onDragPointerDown }: { onDragPointerDown: (e: React.P
       className="relative flex h-11 shrink-0 items-center gap-3 pl-[14px] pr-3 select-none"
       onPointerDown={(e) => {
         if ((e.target as HTMLElement).closest('[data-nodrag]')) return;
-        onDragPointerDown(e);
+        onDragPointerDown?.(e);
       }}
       onDoubleClick={(e) => {
         if ((e.target as HTMLElement).closest('[data-nodrag]')) return;

@@ -2,6 +2,7 @@
  * 文件预览加载：真盘走 Electron IPC / aurora-file 协议；演示模式用节点内嵌字段。
  * Office 解析库按需动态 import，避免拖垮首屏包体。
  */
+import { toAuroraFileUrl } from '../../shared/auroraFileUrl.mjs';
 import { api, isElectron, isRealId } from './aurora';
 import { categoryOf, extOf, FSNode, IMAGE_EXTS } from './fs';
 import { needsFfmpegImageDecode } from './mediaDecode';
@@ -86,8 +87,7 @@ export function canInlinePreview(name: string): boolean {
 /** 与主进程 toAuroraFileUrl 规则一致，渲染进程可同步构造 */
 export function fileSrcUrl(absPath: string): string {
   if (!absPath) return '';
-  const slash = absPath.replace(/\\/g, '/');
-  return `aurora-file:///${slash}`;
+  return toAuroraFileUrl(absPath);
 }
 
 
@@ -168,7 +168,7 @@ async function loadPreviewUncached(
 
     if (kind === 'image' || kind === 'video' || kind === 'audio' || kind === 'pdf') {
       const ext = extOf(node.name);
-      // TIFF / AVIF / HEIF / 常见 RAW：ffmpeg → JPEG
+      // TIFF / AVIF / HEIF / RAW，以及 nativeImage/ffmpeg 统一转 JPEG
       if (kind === 'image' && needsFfmpegImageDecode(ext)) {
         opts?.onProgress?.(30, '转码预览…');
         try {
@@ -182,6 +182,7 @@ async function loadPreviewUncached(
           error: `${ext.toUpperCase()} 内置转码失败，请点「打开」用系统应用查看`,
         };
       }
+      // JPG/WebP/BMP：优先协议直出；失败时 PreviewPane 会再走 imagePreview 转码
       const url = fileSrcUrl(absPath);
       const p: PreviewPayload = { kind, url, meta: mimeOf(ext) };
       if (kind === 'video') {

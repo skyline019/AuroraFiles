@@ -35,7 +35,15 @@ describe('index integration bench (temp disk)', () => {
   afterEach(async () => {
     disposeVolumeIndex(tree);
     await fs.rm(tree, { recursive: true, force: true });
-    await fs.rm(idxDir, { recursive: true, force: true });
+    // Windows: node:sqlite may briefly keep the handle after close
+    for (let i = 0; i < 15; i++) {
+      try {
+        await fs.rm(idxDir, { recursive: true, force: true });
+        break;
+      } catch {
+        await new Promise((r) => setTimeout(r, 40));
+      }
+    }
   });
 
   it('build → query → persist → hydrate → mutate softRefresh', async () => {

@@ -1,8 +1,10 @@
 # Aurora Files — Build & Release
 
+当前版本：**0.1.3**（见根目录 `package.json`）。发布说明：[`RELEASE_NOTES_v0.1.3.md`](./RELEASE_NOTES_v0.1.3.md)。
+
 ## 内置 ffmpeg
 
-预览 TIFF/AVIF/HEIF/RAW 与视频封面使用 `node_modules/ffmpeg-static/ffmpeg.exe`（随包装入，GPL）。
+预览难解码图（HEIC/TIFF/AVIF/RAW）与视频封面使用 `ffmpeg-static`（GPL）。
 
 已有可用二进制时 **`ffmpeg:ensure` 不会重新下载**。
 
@@ -19,8 +21,13 @@ npm run ffmpeg:ensure
 
 规则：**走镜像就不要代理；走代理不要镜像**。
 
-打包后应落在 `release/win-unpacked/resources/app.asar.unpacked/node_modules/ffmpeg-static/ffmpeg.exe`（`asarUnpack`）。  
-本机 full_build 约 **217MB**，安装包体积会明显增大；上线前宜换成官方 `ffmpeg-static` 小包或裁剪构建。
+打包后二进制在：
+
+```
+release[-x.y.z]/win-unpacked/resources/ffmpeg/ffmpeg.exe
+```
+
+（`extraResources`，不在 asar 内。）解析逻辑见 `electron/ffmpegPath.mjs`。媒体预览说明：[`preview-media.md`](./preview-media.md)。
 
 ## 图标
 
@@ -38,14 +45,24 @@ npm run icons:gen
 npm run build:desktop
 ```
 
-产物（0.1.0 未签名，含内置 ffmpeg 后实测约 **154MB**）：
+若 `release/win-unpacked` 被占用（EBUSY），可改输出目录：
+
+```bash
+$env:CSC_IDENTITY_AUTO_DISCOVERY='false'
+npx cross-env AURORA_ELECTRON=1 vite build
+npx electron-builder --win --x64 --publish never --config.directories.output=release-0.1.3
+```
+
+然后将 `AuroraFiles-Setup-*.exe` / `Portable` / `latest.yml` 拷入 `release/`。
+
+### 产物（0.1.3 未签名，约 148 MB）
 
 | 文件 | 说明 |
 |---|---|
-| `release/AuroraFiles-Setup-0.1.0.exe` | NSIS installer |
-| `release/AuroraFiles-Portable-0.1.0.exe` | Portable |
+| `release/AuroraFiles-Setup-0.1.3.exe` | NSIS installer |
+| `release/AuroraFiles-Portable-0.1.3.exe` | Portable |
 | `release/latest.yml` | electron-updater feed |
-| `release/win-unpacked/AuroraFiles.exe` | Unpacked app (`productName`: Aurora Files) |
+| `release-0.1.3/win-unpacked/AuroraFiles.exe` | 解包目录（推荐验证） |
 
 仅解压目录（更快验证）：
 
@@ -56,11 +73,20 @@ npm run build:desktop:dir
 打包后重测：
 
 ```bash
-AURORA_SMOKE_REQUIRE=1 npm run test:smoke-win   # 须含 exe + asar + 内置 ffmpeg
-npm run test:e2e
+AURORA_SMOKE_REQUIRE=1 npm run test:smoke-win   # 须含 exe + asar + ffmpeg resource
+npx electron scripts/perf/smoke-image-preview.mjs
+npm run test:e2e:index
 ```
 
 默认 `CSC_IDENTITY_AUTO_DISCOVERY=false`，避免本机无证书时卡住。
+
+### asar 必含
+
+| 路径 | 用途 |
+|---|---|
+| `shared/auroraFileUrl.mjs` | MIME + URL 编码 |
+| `electron/index/indexTrack.mjs` | UI/Perf 双轨 |
+| `electron/mediaPath.mjs` | 长路径 / CJK→ffmpeg |
 
 ## 签名（可选）
 
@@ -72,7 +98,7 @@ npm run test:e2e
 
 ## 自动更新
 
-运行时依赖 `electron-updater`（已接入 `electron/updater.mjs`）。
+运行时依赖 `electron-updater`（`electron/updater.mjs`）。
 
 1. **Feed URL**（二选一）  
    - 环境变量 `AURORA_UPDATE_URL=https://your.cdn/aurora-files/`  
@@ -89,11 +115,11 @@ npm run test:e2e
 ### GitHub Releases 示例
 
 ```json
-"publish": [{ "provider": "github", "owner": "YOUR_ORG", "repo": "aurora-files" }]
+"publish": [{ "provider": "github", "owner": "skyline019", "repo": "AuroraFiles" }]
 ```
 
 ```bash
-GH_TOKEN=... npx electron-builder --win --x64 --publish always
+GH_TOKEN=... npm run build:desktop:publish
 ```
 
 ## CI 门禁
@@ -103,18 +129,12 @@ GH_TOKEN=... npx electron-builder --win --x64 --publish always
 | Job | 内容 |
 |---|---|
 | `test` (ubuntu) | typecheck、单元、index-bench、双端 build |
-| `windows-gate` | typecheck、单元、`test:real-search`、Playwright e2e（含 preview-media） |
-| `package-win` | 未签名包 + `test:smoke-win`（`AURORA_SMOKE_REQUIRE=1`） |
+| `windows-gate` | typecheck、单元、`test:real-search`、Playwright e2e |
+| `package-win` (main push) | 未签名包 + `test:smoke-win`（`AURORA_SMOKE_REQUIRE=1`）+ artifact |
 
-本地可选冒烟（无 `win-unpacked` 时 SKIP）：
-
-```bash
-npm run test:smoke-win
-```
-| `package-win` (main push) | 未签名桌面包 + artifact 上传 |
-
-本地一键：
+本地：
 
 ```bash
 npm run ci
+npm run test:smoke-win   # 无 win-unpacked 时 SKIP
 ```

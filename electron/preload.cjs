@@ -47,4 +47,6 @@ contextBridge.exposeInMainWorld('aurora', {
     return () => ipcRenderer.removeListener('app:update-status', handler);
   },
   openExternal: (url) => invoke('shell:openExternal', url),
+  startupMarks: () => invoke('app:startupMarks'),
+  startupMark: (name) => invoke('app:startupMark', name),
 });

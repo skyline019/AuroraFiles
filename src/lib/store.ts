@@ -14,6 +14,8 @@ import { bumpGen, createDebouncedRefCount, isCurrentGen } from './asyncGate';
 /** 进夹/刷新引用计数：并发 hydrate 不会被先完成的任务误关 */
 let folderRefreshGate: ReturnType<typeof createDebouncedRefCount> | null = null;
 let deepSearchGen = 0;
+/** 进夹代数：连点/快速切换只应用最新一次 hydrate */
+let folderHydrateGen = 0;
 
 function getFolderRefreshGate(set: (p: Partial<Store> | ((s: Store) => Partial<Store>)) => void) {
   if (!folderRefreshGate) {
@@ -90,6 +92,7 @@ interface Store {
   indexInfo: {
     ready: boolean;
     building: boolean;
+    refreshing?: boolean;
     size: number;
     source?: string;
     watching?: boolean;
@@ -271,7 +274,8 @@ export const useStore = create<Store>()((set, get) => {
         set({
           indexInfo: {
             ready: st.ready,
-            building: st.building,
+            building: !!st.building,
+            refreshing: !!st.refreshing,
             size: st.size,
             source: st.source,
             watching: st.watching,
@@ -992,24 +996,36 @@ export const useStore = create<Store>()((set, get) => {
     }),
 
     refreshFolder: async (folderId) => {
-      const s = get();
-      if (s.fsMode !== 'real') return;
+      const s0 = get();
+      if (s0.fsMode !== 'real') return;
+      const gen = ++folderHydrateGen;
+      const abs0 = resolvePathId(folderId, s0.quickMap);
+      const cachedKids = (s0.nodes[abs0]?.childrenIds?.length || s0.nodes[folderId]?.childrenIds?.length || 0) > 0;
       const gate = getFolderRefreshGate(set);
-      gate.enter();
+      // 已有缓存：静默刷新，不挡操作、不闪「正在加载」
+      if (!cachedKids) gate.enter();
       try {
         const showHidden = tab().showHidden;
-        const next = await hydrateFolder(s.nodes, folderId, showHidden, s.quickMap);
-        set({ nodes: next, tabs: sanitize(s.tabs, next) });
-        const abs = resolvePathId(folderId, s.quickMap);
+        // 用最新 nodes，避免连点时基于过期快照合并
+        const next = await hydrateFolder(get().nodes, folderId, showHidden, get().quickMap);
+        if (gen !== folderHydrateGen) return;
+        set({ nodes: next, tabs: sanitize(get().tabs, next) });
+        const abs = resolvePathId(folderId, get().quickMap);
         const vol = isAbsPath(abs) ? volumeRootOf(abs) : null;
         if (vol && isElectron()) {
           if (vol !== get().indexRoot) set({ indexRoot: vol });
-          void api().ensureIndex(vol, { maxDepth: 10, maxScan: 120_000 }).catch(() => undefined);
+          const info = get().indexInfo;
+          // 索引已就绪且同卷：跳过 ensureIndex，杜绝每次进夹打主进程
+          const warm = !!info?.ready && !info.building && get().indexRoot === vol;
+          if (!warm) {
+            void api().ensureIndex(vol, { maxDepth: 64, track: 'ui' }).catch(() => undefined);
+          }
         }
       } catch (err) {
+        if (gen !== folderHydrateGen) return;
         get().toast((err as Error).message || '无法读取目录', 'error');
       } finally {
-        gate.leave();
+        if (!cachedKids) gate.leave();
       }
     },
 
@@ -1060,18 +1076,20 @@ export const useStore = create<Store>()((set, get) => {
         const roots = fixedDrives.length
           ? fixedDrives
           : [{ path: driveRoot }];
-        void api().ensureIndexes(roots, { maxDepth: 10, maxScan: 120_000 })
+        void api().ensureIndexes(roots, { maxDepth: 64, track: 'ui' })
           .then(() => get().refreshIndexStatus())
-          .catch(() => undefined);
+          .catch(() => { void get().refreshIndexStatus(); });
         get().toast(`已连接本机磁盘 · 正在索引 ${roots.length} 个卷`);
         let ticks = 0;
         const timer = setInterval(() => {
           ticks += 1;
           void get().refreshIndexStatus().then(() => {
             const info = get().indexInfo;
-            if ((info?.ready && !info.building) || ticks > 90) clearInterval(timer);
+            // Stop when cold build done (background softRefresh must not keep the chip amber)
+            if (info?.ready && !info.building) clearInterval(timer);
+            else if (ticks > 400) clearInterval(timer); // ~20 min safety for large volumes
           });
-        }, 1500);
+        }, 3000);
       } catch (err) {
         set({ booting: false });
         get().toast((err as Error).message || '无法连接磁盘，已保留演示盘', 'error');
@@ -1079,6 +1097,7 @@ export const useStore = create<Store>()((set, get) => {
     },
 
     enterDemo: () => {
+      const wasDemo = get().fsMode === 'demo';
       const nodes = demoNodes();
       const t = mkTab({ t: 'node', id: ID.desktop });
       set({
@@ -1089,8 +1108,11 @@ export const useStore = create<Store>()((set, get) => {
         clipboard: null,
         undoStack: [],
         redoStack: [],
+        indexInfo: null,
+        booting: false,
       });
-      get().toast('已进入极光演示盘（虚拟数据）');
+      // Avoid toast spam when harness re-locks demo mid-session
+      if (!wasDemo) get().toast('已进入演示盘', 'info');
     },
 
     exitDemoToReal: async () => {

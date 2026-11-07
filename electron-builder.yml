@@ -7,11 +7,42 @@ directories:
 files:
   - dist/**/*
   - electron/**/*
+  - shared/**/*
   - package.json
+  - "!electron/**/*.test.ts"
+  - "!shared/**/*.test.ts"
+  - "!node_modules/**/*"
+  - node_modules/electron-updater/**/*
+  - node_modules/builder-util-runtime/**/*
+  - node_modules/fs-extra/**/*
+  - node_modules/jsonfile/**/*
+  - node_modules/universalify/**/*
+  - node_modules/graceful-fs/**/*
+  - node_modules/lazy-val/**/*
+  - node_modules/lodash.escaperegexp/**/*
+  - node_modules/lodash.isequal/**/*
+  - node_modules/sax/**/*
+  - node_modules/semver/**/*
+  - node_modules/tiny-typed-emitter/**/*
+  - node_modules/debug/**/*
+  - node_modules/ms/**/*
+  - node_modules/js-yaml/**/*
+  - node_modules/argparse/**/*
 asar: true
+asarUnpack:
+  - electron/index/usn-read.ps1
 npmRebuild: false
 extraMetadata:
   main: electron/main.mjs
+extraResources:
+  - from: node_modules/ffmpeg-static/ffmpeg.exe
+    to: ffmpeg/ffmpeg.exe
+  - from: native/indexd/target/release/aurora-indexd.exe
+    to: native/aurora-indexd.exe
+  - from: native/walk-bench/target/release/aurora-walk-bench.exe
+    to: native/aurora-walk-bench.exe
+  - from: native/mft-enum/build/Release/aurora-mft-enum.exe
+    to: native/aurora-mft-enum.exe
 win:
   icon: electron/build/icon.ico
   target:
@@ -28,6 +59,6 @@ nsis:
   shortcutName: 极光文件
   installerIcon: electron/build/icon.ico
   uninstallerIcon: electron/build/icon.ico
-  artifactName: ${productName}-${version}-Setup.${ext}
+  artifactName: AuroraFiles-Setup-${version}.${ext}
 portable:
-  artifactName: ${productName}-${version}-Portable.${ext}
+  artifactName: AuroraFiles-Portable-${version}.${ext}

@@ -1,0 +1,21 @@
+[package]
+name = "aurora-walk-bench"
+version = "0.1.0"
+edition = "2021"
+description = "Parallel volume walk microbench + streaming WalkEngine worker for Aurora Files"
+
+[[bin]]
+name = "aurora-walk-bench"
+path = "src/main.rs"
+
+[dependencies]
+jwalk = "0.8"
+rayon = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = 3

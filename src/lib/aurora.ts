@@ -60,6 +60,7 @@ export interface AuroraAPI {
   indexStatus: (root: string) => Promise<{
     ready: boolean;
     building: boolean;
+    refreshing?: boolean;
     scanned: number;
     size: number;
     source?: string;
@@ -78,12 +79,21 @@ export interface AuroraAPI {
     excludeNames?: string[];
     builtinSkip?: string[];
   }>;
-  indexPrefs: () => Promise<{ maxScan: number; excludeNames: string[] }>;
-  setIndexPrefs: (partial: { maxScan?: number; excludeNames?: string[] }) => Promise<{ maxScan: number; excludeNames: string[] }>;
-  ensureIndex: (root: string, opts?: { maxDepth?: number; maxScan?: number; rebuild?: boolean }) => Promise<unknown>;
+  indexPrefs: () => Promise<{ maxScan: number; excludeNames: string[]; indexTrack?: 'ui' | 'perf' }>;
+  setIndexPrefs: (partial: {
+    maxScan?: number;
+    excludeNames?: string[];
+    indexTrack?: 'ui' | 'perf';
+  }) => Promise<{ maxScan: number; excludeNames: string[]; indexTrack?: 'ui' | 'perf' }>;
+  ensureIndex: (root: string, opts?: {
+    maxDepth?: number;
+    maxScan?: number;
+    rebuild?: boolean;
+    track?: 'ui' | 'perf';
+  }) => Promise<unknown>;
   ensureIndexes: (
     roots: (string | { path: string; removable?: boolean })[],
-    opts?: { maxDepth?: number; maxScan?: number },
+    opts?: { maxDepth?: number; maxScan?: number; track?: 'ui' | 'perf' },
   ) => Promise<{ roots: string[] }>;
   /** @deprecated 用 imagePreview；保留兼容 */
   heicPreview: (p: string) => Promise<{ url: string; meta?: string } | null>;
@@ -106,6 +116,8 @@ export interface AuroraAPI {
   quitAndInstall: () => Promise<void>;
   onUpdateStatus?: (cb: (s: { state: string; message: string; version?: string; percent?: number }) => void) => () => void;
   openExternal: (url: string) => Promise<void>;
+  startupMarks: () => Promise<Record<string, number>>;
+  startupMark: (name: string) => Promise<Record<string, number>>;
 }
 
 declare global {

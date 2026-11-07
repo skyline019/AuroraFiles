@@ -1,5 +1,7 @@
 ## Aurora Files v0.1.0
 
+> Historical first cut. **Current:** [v0.1.3](./RELEASE_NOTES_v0.1.3.md).
+
 First public **Windows x64** cut — Apple-style explorer UI on a real disk via Electron.
 
 ### Highlights
