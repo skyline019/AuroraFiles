@@ -74,6 +74,36 @@ test.describe('Deep search from current location', () => {
     await search.fill('');
   });
 
+  test('deep search keeps folders before files (no interleave)', async ({ page }) => {
+    await page.evaluate(() => {
+      const st = window.__aurora!.getState();
+      st.navigate({ t: 'node', id: 'pics' });
+      st.patchTab({ view: 'list', groupByCategory: false });
+    });
+    await page.evaluate(async () => {
+      await window.__aurora!.getState().runDeepSearch('图');
+    });
+    await expect(page.getByTestId('deep-search-busy')).toHaveCount(0, { timeout: 8_000 });
+
+    const ok = await page.evaluate(() => {
+      const st = window.__aurora!.getState();
+      const ids = [...document.querySelectorAll('[data-item]')].map((el) => el.getAttribute('data-item')!);
+      const kinds = ids.map((id) => {
+        const n = st.nodes[id];
+        return !n ? null : n.kind === 'file' ? 'file' : 'folder';
+      }).filter(Boolean) as string[];
+      // 硬契约：两侧都必须出现，禁止 skip
+      if (!kinds.includes('folder') || !kinds.includes('file')) {
+        return { ok: false, kinds, reason: 'missing-kind' };
+      }
+      const firstFile = kinds.indexOf('file');
+      const lastFolder = kinds.lastIndexOf('folder');
+      return { ok: lastFolder < firstFile, kinds, reason: null };
+    });
+    expect(ok.reason).toBeNull();
+    expect(ok.ok).toBe(true);
+  });
+
   test('multi-word deep search AND from desktop', async ({ page }) => {
     // 桌面下「设计稿」内有 主视觉-v3.psd；多词应能命中
     const search = page.locator('input[placeholder*="搜索"]').first();

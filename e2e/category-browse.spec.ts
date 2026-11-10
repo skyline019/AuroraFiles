@@ -77,4 +77,64 @@ test.describe('Category browse', () => {
       }),
     ).toBe(true);
   });
+
+  test('exit search keeps groupBy; deep hits keep folders before files', async ({ page }) => {
+    await page.evaluate(() => {
+      const st = window.__aurora!.getState();
+      st.navigate({ t: 'node', id: 'pics' });
+      st.patchTab({ view: 'list', groupByCategory: true });
+    });
+    await expect(page.getByTestId('section-header-folder')).toBeVisible({ timeout: 5_000 });
+
+    await page.evaluate(async () => {
+      await window.__aurora!.getState().runDeepSearch('图');
+    });
+    await expect(page.getByTestId('deep-search-busy')).toHaveCount(0, { timeout: 8_000 });
+
+    const order = await page.evaluate(() => {
+      const st = window.__aurora!.getState();
+      const tab = st.tabs.find((t) => t.id === st.activeTabId)!;
+      const hits = st.deepHits || [];
+      const list = hits.map((id) => st.nodes[id]).filter((n): n is NonNullable<typeof n> => !!n && !n.deleted);
+      // mirror presentDeepHits contract via rendered items when grouped: folder header first
+      return {
+        groupBy: tab.groupByCategory,
+        kinds: list.map((n) => (n.kind === 'file' ? 'file' : 'folder')),
+        hasFolderHeader: !!document.querySelector('[data-testid="section-header-folder"]'),
+      };
+    });
+    expect(order.groupBy).toBe(true);
+    // interleaved raw hits may exist; UI must still show folder section when grouped
+    expect(order.hasFolderHeader).toBe(true);
+    // if both kinds present in hits, raw list may interleave — assert via store helper
+    const partitioned = await page.evaluate(() => {
+      const st = window.__aurora!.getState();
+      const tab = st.tabs.find((t) => t.id === st.activeTabId)!;
+      // useItems path: read DOM order of data-item under list
+      const ids = [...document.querySelectorAll('[data-item]')].map((el) => el.getAttribute('data-item')!);
+      const kinds = ids.map((id) => {
+        const n = st.nodes[id];
+        return !n ? null : n.kind === 'file' ? 'file' : 'folder';
+      }).filter(Boolean) as string[];
+      const firstFile = kinds.indexOf('file');
+      const lastFolder = kinds.lastIndexOf('folder');
+      return { kinds, ok: firstFile === -1 || lastFolder === -1 || lastFolder < firstFile, search: tab.search };
+    });
+    expect(partitioned.ok).toBe(true);
+
+    // Esc / clear：退出搜索后分组仍在
+    await page.evaluate(() => {
+      const st = window.__aurora!.getState();
+      st.clearDeepSearch();
+      st.patchTab({ search: '' });
+    });
+    await expect.poll(async () =>
+      page.evaluate(() => {
+        const st = window.__aurora!.getState();
+        const tab = st.tabs.find((t) => t.id === st.activeTabId)!;
+        return tab.groupByCategory === true && !tab.search;
+      }),
+    ).toBe(true);
+    await expect(page.getByTestId('section-header-folder')).toBeVisible();
+  });
 });

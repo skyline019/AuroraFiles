@@ -13,6 +13,7 @@ import { bumpGen, createDebouncedRefCount, isCurrentGen } from './asyncGate';
 import {
   browseRowsFromItems,
   filterByCategories,
+  foldersFirstStable,
   matchesTypeToken,
   type BrowseRow,
 } from './groupItems';
@@ -409,16 +410,9 @@ export const useStore = create<Store>()((set, get) => {
       const t = tab();
       if (t.hi > 0) {
         deepSearchGen = bumpGen(deepSearchGen);
-        patchActive({
-          hi: t.hi - 1,
-          selection: [],
-          renaming: null,
-          search: '',
-          categoryFilter: [],
-          groupByCategory: false,
-          collapsedCategories: [],
-        });
-        set({ deepSearching: false });
+        // 仅退出搜索/换历史条目：保留分组；换目录进夹由 navigate 复位
+        patchActive({ hi: t.hi - 1, selection: [], renaming: null, search: '' });
+        set({ deepHits: null, deepMeta: null, deepSearching: false });
         const l = loc({ ...t, hi: t.hi - 1 });
         if (get().fsMode === 'real' && l.t === 'node') void get().refreshFolder(l.id);
       }
@@ -427,16 +421,8 @@ export const useStore = create<Store>()((set, get) => {
       const t = tab();
       if (t.hi < t.history.length - 1) {
         deepSearchGen = bumpGen(deepSearchGen);
-        patchActive({
-          hi: t.hi + 1,
-          selection: [],
-          renaming: null,
-          search: '',
-          categoryFilter: [],
-          groupByCategory: false,
-          collapsedCategories: [],
-        });
-        set({ deepSearching: false });
+        patchActive({ hi: t.hi + 1, selection: [], renaming: null, search: '' });
+        set({ deepHits: null, deepMeta: null, deepSearching: false });
         const l = loc({ ...t, hi: t.hi + 1 });
         if (get().fsMode === 'real' && l.t === 'node') void get().refreshFolder(l.id);
       }
@@ -1268,14 +1254,23 @@ function applyDeepSearchFilters(list: FSNode[], tab: TabState): FSNode[] {
   return applyTabCategoryFilter(out, tab);
 }
 
+/** 深搜命中：筛选后文件夹稳定置顶（相关度序保留在各自区内） */
+export function presentDeepHits(
+  nodes: Record<string, FSNode>,
+  deepHits: string[],
+  tab: TabState,
+): FSNode[] {
+  const list = deepHits.map((id) => nodes[id]).filter((n): n is FSNode => !!n && !n.deleted);
+  return foldersFirstStable(applyDeepSearchFilters(list, tab));
+}
+
 export const useItems = (): FSNode[] => {
   const nodes = useStore(s => s.nodes);
   const deepHits = useStore(s => s.deepHits);
   const tab = useActiveTab();
   return useMemo(() => {
     if (deepHits?.length && tab.search.trim()) {
-      const list = deepHits.map(id => nodes[id]).filter((n): n is FSNode => !!n && !n.deleted);
-      return applyDeepSearchFilters(list, tab);
+      return presentDeepHits(nodes, deepHits, tab);
     }
     return visibleItems(nodes, tab);
   }, [nodes, tab, deepHits]);
@@ -1289,8 +1284,7 @@ export const useItemsForChips = (): FSNode[] => {
   return useMemo(() => {
     const tabNoCat = { ...tab, categoryFilter: [] as Category[] };
     if (deepHits?.length && tab.search.trim()) {
-      const list = deepHits.map(id => nodes[id]).filter((n): n is FSNode => !!n && !n.deleted);
-      return applyDeepSearchFilters(list, tabNoCat);
+      return presentDeepHits(nodes, deepHits, tabNoCat);
     }
     return visibleItems(nodes, tabNoCat);
   }, [nodes, tab, deepHits]);

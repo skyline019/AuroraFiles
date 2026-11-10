@@ -1,7 +1,7 @@
 {
   "name": "aurora-files",
   "private": true,
-  "version": "0.1.12",
+  "version": "0.1.13",
   "description": "Aurora Files — Apple-style file manager for Windows (Electron + real disk)",
   "author": "skylinezhanghan-wq",
   "type": "module",

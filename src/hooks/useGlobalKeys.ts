@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { useStore, currentNodeId } from '@/lib/store';
+import { useStore, currentNodeId, presentDeepHits } from '@/lib/store';
 import { ID, visibleItems, extOf, categoryOf } from '@/lib/fs';
 import { galleryStepPool, stepInPool } from '@/lib/asyncGate';
 
@@ -12,7 +12,11 @@ export function useGlobalKeys() {
     };
     const itemsNow = () => {
       const st = useStore.getState();
-      return visibleItems(st.nodes, activeTab());
+      const tab = activeTab();
+      if (st.deepHits?.length && tab.search.trim()) {
+        return presentDeepHits(st.nodes, st.deepHits, tab);
+      }
+      return visibleItems(st.nodes, tab);
     };
     const selectAll = () => useStore.getState().setSelection(itemsNow().map((i) => i.id));
     const invert = () => {
@@ -63,7 +67,12 @@ export function useGlobalKeys() {
         if (st.shortcutsOpen) { st.setShortcuts(false); return; }
         if (st.infoId) { st.setInfo(null); return; }
         if (typing) return;
-        if (tab.search) { st.patchTab({ search: '' }); return; }
+        // Esc 退出搜索：清深搜命中，但不得动 groupByCategory / categoryFilter
+        if (tab.search || st.deepHits?.length) {
+          st.clearDeepSearch();
+          st.patchTab({ search: '' });
+          return;
+        }
         if (tab.selection.length) st.setSelection([]);
         return;
       }
@@ -75,7 +84,7 @@ export function useGlobalKeys() {
 
       if (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
         const list = st.deepHits?.length && tab.search.trim()
-          ? st.deepHits.map((id) => st.nodes[id]).filter((n): n is NonNullable<typeof n> => !!n && !n.deleted)
+          ? presentDeepHits(st.nodes, st.deepHits, tab)
           : visibleItems(st.nodes, tab);
         if (!list.length) return;
         e.preventDefault();

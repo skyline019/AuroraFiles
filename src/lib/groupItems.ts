@@ -117,6 +117,22 @@ export function presentChipCategories(items: FSNode[]): Category[] {
   return CATEGORY_CHIP_ORDER.filter((c) => seen.has(c));
 }
 
+/**
+ * 稳定分区：文件夹（含 drive/special）在前、文件在后，各自保持原相对顺序。
+ * 深搜相关度序不得把文件夹/文件交错。
+ */
+export function foldersFirstStable(items: FSNode[]): FSNode[] {
+  if (items.length < 2) return items;
+  const folders: FSNode[] = [];
+  const files: FSNode[] = [];
+  for (const n of items) {
+    if (n.kind === 'file') files.push(n);
+    else folders.push(n);
+  }
+  if (!folders.length || !files.length) return items;
+  return folders.concat(files);
+}
+
 export function browseRowsFromItems(
   items: FSNode[],
   groupBy: boolean,

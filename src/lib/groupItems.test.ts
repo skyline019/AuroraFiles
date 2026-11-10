@@ -4,6 +4,7 @@ import {
   browseRowsFromItems,
   filterByCategories,
   flattenGrouped,
+  foldersFirstStable,
   groupByCategory,
   matchesTypeToken,
   presentChipCategories,
@@ -89,6 +90,23 @@ describe('groupByCategory / flatten', () => {
   it('browseRowsFromItems flat mode', () => {
     const items = [file('a.png')];
     expect(browseRowsFromItems(items, false)).toEqual([{ t: 'item', node: items[0] }]);
+  });
+});
+
+describe('foldersFirstStable', () => {
+  it('keeps folders before files without reshuffling within each kind', () => {
+    const a = file('a.png');
+    const b = folder('B');
+    const c = file('c.pdf');
+    const d = folder('D');
+    // relevance-like interleaved input
+    const out = foldersFirstStable([a, b, c, d]);
+    expect(out.map((n) => n.name)).toEqual(['B', 'D', 'a.png', 'c.pdf']);
+  });
+
+  it('is a no-op when only one kind', () => {
+    const onlyFiles = [file('a.png'), file('b.pdf')];
+    expect(foldersFirstStable(onlyFiles)).toBe(onlyFiles);
   });
 });
 
