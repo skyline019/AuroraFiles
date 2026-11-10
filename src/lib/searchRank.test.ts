@@ -14,6 +14,11 @@ describe('scoreMatch', () => {
   it('returns 0 when no match', () => {
     expect(scoreMatch({ name: 'a.txt' }, 'zzz')).toBe(0);
   });
+
+  it('multi-token AND matches hyphenated CJK names', () => {
+    expect(scoreMatch({ name: '主视觉-v3.psd' }, '主视觉 v3')).toBeGreaterThan(0);
+    expect(scoreMatch({ name: '主视觉.psd' }, '主视觉 v3')).toBe(0);
+  });
 });
 
 describe('rankSearchResults', () => {

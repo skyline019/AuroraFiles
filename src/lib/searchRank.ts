@@ -1,4 +1,4 @@
-/** 瞬时搜索排序：前缀 > 包含 > 路径片段 */
+/** 瞬时搜索排序：前缀 > 包含 > 路径片段；多词 AND */
 
 export interface Rankable {
   name: string;
@@ -10,21 +10,39 @@ export function normalizeQuery(q: string): string {
   return q.trim().toLowerCase();
 }
 
+export function queryTokens(query: string): string[] {
+  return normalizeQuery(query).split(/\s+/).filter(Boolean);
+}
+
+function tokenScore(name: string, path: string, token: string): number {
+  if (!token) return 0;
+  if (name === token) return 1000;
+  if (name.startsWith(token)) return 500;
+  if (name.includes(token)) return 200;
+  if (path.includes(token)) return 80;
+  return 0;
+}
+
 export function scoreMatch(item: Rankable, query: string): number {
-  const q = normalizeQuery(query);
-  if (!q) return 0;
+  const tokens = queryTokens(query);
+  if (!tokens.length) return 0;
   const name = item.name.toLowerCase();
   const path = (item.path || '').toLowerCase();
-  let score = 0;
-  if (name === q) score += 1000;
-  else if (name.startsWith(q)) score += 500;
-  else if (name.includes(q)) score += 200;
-  else if (path.includes(q)) score += 80;
-  else return 0;
 
-  // 文件略优先于深层路径噪声
+  let score = 0;
+  for (const t of tokens) {
+    const s = tokenScore(name, path, t);
+    if (s <= 0) return 0; // AND：任一词未命中则丢弃
+    score += s;
+  }
+
+  // 整句连写仍加分（如「主视觉-v3」对查询「主视觉 v3」）
+  const joined = tokens.join('');
+  if (joined && (name.includes(joined) || name.replace(/[-_\s.]/g, '').includes(joined))) {
+    score += 50;
+  }
+
   if (item.kind === 'file') score += 5;
-  // 越短越靠前
   score += Math.max(0, 40 - name.length);
   return score;
 }

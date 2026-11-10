@@ -1,15 +1,17 @@
 /**
  * 可取消深搜（无 Electron 依赖，便于 CLI / 压测引用）
  *
- * 策略：
- * 1. 有卷索引且就绪 → 瞬时按「当前位置前缀」过滤返回（无 warm 等待）
- * 2. 否则立刻从当前位置 Dirent 深 walk（默认深度 64，扫描可无上限）
- * 不在子文件夹路径上另开 VolumeIndex，避免空索引 + warmShallow 卡顿。
+ * 任意词无延迟策略：
+ * 1. 卷索引有数据（ready 或已有条目）→ 立刻 contains 查询 + 当前位置前缀过滤
+ * 2. 有命中则立即返回（不 await 建索）
+ * 3. 无命中 → 并行 Dirent 深 walk（默认深 64 / 扫描无上限），满额早停
  */
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import os from 'node:os';
 import { ensureIndexed, queryIndex, noteFsChange, getIndex } from './fsIndex.mjs';
 import { effectiveSkipSet, resolveScanLimit } from './indexPrefs.mjs';
+import { parallelDirentWalk } from './fastWalk.mjs';
 
 let searchJobId = 0;
 
@@ -55,18 +57,17 @@ export function isPathUnder(absPath, root) {
   return p === r || p.startsWith(r + sep);
 }
 
-function joinUnder(dir, name) {
-  if (process.platform === 'win32') {
-    const last = dir.charCodeAt(dir.length - 1);
-    if (last === 92 || last === 47) return dir + name;
-    return `${dir}\\${name}`;
-  }
-  return path.join(dir, name);
+/** 任意词：多分词 AND；匹配文件名或完整路径（子串） */
+export function nameMatchesQuery(name, fullPath, queryLower) {
+  const tokens = String(queryLower || '').split(/\s+/).filter(Boolean);
+  if (!tokens.length) return false;
+  const n = String(name || '').toLowerCase();
+  const p = String(fullPath || '').toLowerCase();
+  return tokens.every((t) => n.includes(t) || p.includes(t));
 }
 
 /**
- * 优先走卷索引（作用域=当前位置）；否则立刻深 walk。
- * 新搜索或 cancelSearch 作废旧任务。
+ * 优先瞬时索引；未命中则并行深 walk。
  */
 export async function searchFiles(rootPath, query, opts = {}) {
   const root = normalizePath(rootPath);
@@ -80,12 +81,10 @@ export async function searchFiles(rootPath, query, opts = {}) {
   const skip = effectiveSkipSet(undefined, skipMode);
   const forceWalk = opts.forceWalk === true;
   const maxResults = Math.min(Number(opts.maxResults) || 400, 2000);
-  // 深度：默认 64；硬顶 256（不再截成 6）
   const maxDepth = Math.min(
     Math.max(1, Number(opts.maxDepth) > 0 ? Number(opts.maxDepth) : 64),
     256,
   );
-  // 扫描：0 / 缺省偏深搜 → resolveScanLimit；显式正数尊重（仍受 prefs 软顶）
   const maxScan = opts.maxScan === 0 || opts.maxScan === '0'
     ? resolveScanLimit(0)
     : (Number(opts.maxScan) > 0
@@ -94,7 +93,6 @@ export async function searchFiles(rootPath, query, opts = {}) {
 
   const vol = volumeRootOf(root);
 
-  // 后台催热卷索引；不 await，不阻塞本次查询
   if (!forceWalk && opts.indexDepth !== 0) {
     void ensureIndexed(vol, {
       maxDepth: opts.indexDepth ?? 64,
@@ -105,11 +103,11 @@ export async function searchFiles(rootPath, query, opts = {}) {
     }).catch(() => undefined);
   }
 
+  // 索引只要有条目就先查（建索中也可瞬时出结果）
   if (!forceWalk) {
     const idx = getIndex(vol);
-    // 卷索引就绪：先瞬时按当前位置过滤。
-    // 关键：命中为空时必须回退 walk——索引可能不完整，或 CJK/短词 FTS 漏召回。
-    if (idx.ready && !idx.building) {
+    const hasData = idx.ready || idx.entryCount() > 0 || idx.scanned > 200;
+    if (hasData) {
       const indexed = await queryIndex(vol, q, {
         maxResults: Math.min(maxResults * 4, 2000),
         skipWarm: true,
@@ -119,82 +117,73 @@ export async function searchFiles(rootPath, query, opts = {}) {
         return { items: [], truncated: true, scanned: indexed.scanned || 0, source: 'cancelled', cancelled: true };
       }
       const scoped = (indexed.items || []).filter((it) => isPathUnder(it.path, root));
+      // 有命中 → 立刻返回（无延迟）；仅当完全空才 walk 补召回
       if (scoped.length > 0) {
         const items = scoped.slice(0, maxResults);
         return {
           items,
-          truncated: scoped.length > maxResults || !!indexed.truncated,
+          truncated: scoped.length > maxResults || !!indexed.truncated || (!idx.ready || !!idx.building),
           scanned: indexed.scanned || scoped.length,
           source: `${indexed.source || 'index'}-under`,
           cached: !!indexed.cached,
         };
       }
-      // 空命中 → 继续下方 walk（勿把「索引未收录」当成「没有文件」）
     }
   }
 
-  // 索引未就绪 / 强制 walk：从当前位置立刻深扫（Dirent，避免逐文件 lstat）
+  // 并行 Dirent walk：任意词子串匹配，满额 / 取消早停
   const items = [];
-  let scanned = 0;
+  const seen = new Set();
   let truncated = false;
+  let walkScanned = 0;
 
-  async function walk(dir, depth) {
-    if (aborted()) return;
-    if (truncated || items.length >= maxResults || scanned >= maxScan) {
-      truncated = true;
-      return;
-    }
-    let ents;
-    try {
-      ents = await fs.readdir(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const ent of ents) {
-      if (aborted()) return;
-      if (truncated || items.length >= maxResults || scanned >= maxScan) {
+  const skipDir = (name) => skip.has(String(name).toLowerCase());
+
+  const walkAbort = () => aborted() || items.length >= maxResults;
+
+  const stats = await parallelDirentWalk(root, {
+    maxDepth,
+    maxScan,
+    concurrency: Math.min(24, Math.max(6, (os.cpus()?.length || 4) * 2)),
+    yieldEvery: 1024,
+    interactive: true,
+    skipDir,
+    followReparse: opts.followReparse === true,
+    aborted: walkAbort,
+    onEntry: (entry) => {
+      if (walkAbort()) {
         truncated = true;
         return;
       }
-      const name = ent.name;
-      if (skip.has(name.toLowerCase())) continue;
-      if (ent.isSymbolicLink?.()) continue;
-      const full = joinUnder(dir, name);
-      scanned += 1;
-      const isDir = ent.isDirectory();
-      // 部分平台 Dirent 对特殊项不可靠时再 lstat
-      let kindDir = isDir;
-      let size = 0;
-      let modifiedAt = 0;
-      if (typeof ent.isDirectory !== 'function' || (!isDir && !ent.isFile?.())) {
-        try {
-          const st = await fs.lstat(full);
-          if (st.isSymbolicLink?.()) continue;
-          kindDir = st.isDirectory();
-          size = st.isFile() ? st.size : 0;
-          modifiedAt = st.mtimeMs || 0;
-        } catch {
-          continue;
-        }
-      }
-      if (name.toLowerCase().includes(q)) {
-        const entry = {
-          path: full,
-          name,
-          kind: kindDir ? 'folder' : 'file',
-          size,
-          modifiedAt,
-        };
-        items.push(entry);
-        noteFsChange(vol, full, entry);
-      }
-      if (kindDir && depth < maxDepth) await walk(full, depth + 1);
-    }
+      walkScanned += 1;
+      const name = entry.name || '';
+      const full = entry.path || '';
+      if (!nameMatchesQuery(name, full, q)) return;
+      const key = full.toLowerCase();
+      if (seen.has(key)) return;
+      seen.add(key);
+      const row = {
+        path: full,
+        name,
+        kind: entry.kind === 'folder' ? 'folder' : 'file',
+        size: entry.size || 0,
+        modifiedAt: entry.modifiedAt || 0,
+      };
+      items.push(row);
+      noteFsChange(vol, full, row);
+      if (items.length >= maxResults) truncated = true;
+    },
+  });
+
+  if (aborted()) {
+    return { items: [], truncated: true, scanned: stats.scanned || walkScanned, source: 'cancelled', cancelled: true };
   }
 
-  await walk(root, 0);
-  if (aborted()) {
-    return { items: [], truncated: true, scanned, source: 'cancelled', cancelled: true };
-  }
-  return { items, truncated, scanned, source: 'walk-fallback' };
+  truncated = truncated || !!stats.hitMax || !!stats.timedOut || items.length >= maxResults;
+  return {
+    items,
+    truncated,
+    scanned: stats.scanned || walkScanned,
+    source: 'walk-parallel',
+  };
 }

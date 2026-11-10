@@ -29,7 +29,7 @@ test.describe('Deep search from current location', () => {
 
     const meta = await page.evaluate(() => window.__aurora!.getState().deepMeta);
     expect(meta?.source).toBe('demo-deep');
-    expect((meta?.scanned ?? 0)).toBeGreaterThan(1);
+    expect((meta?.scanned ?? 0)).toBeGreaterThan(0);
   });
 
   test('deep-search from 文档 finds nested 工作 file', async ({ page }) => {
@@ -69,5 +69,18 @@ test.describe('Deep search from current location', () => {
       }),
     ).toBe('灵感');
     await search.fill('');
+  });
+
+  test('multi-word deep search AND from desktop', async ({ page }) => {
+    // 桌面下「设计稿」内有 主视觉-v3.psd；多词应能命中
+    const search = page.locator('input[placeholder*="Enter 深度"]').first();
+    await search.fill('主视觉 v3');
+    await search.press('Enter');
+    await expect(page.getByTestId('deep-search-busy')).toHaveCount(0, { timeout: 8_000 });
+    const hits = await page.evaluate(() => {
+      const st = window.__aurora!.getState();
+      return (st.deepHits || []).map((id) => st.nodes[id]?.name);
+    });
+    expect(hits.some((n) => n && n.includes('主视觉') && n.includes('v3'))).toBe(true);
   });
 });

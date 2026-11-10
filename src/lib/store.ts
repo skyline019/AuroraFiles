@@ -793,15 +793,15 @@ export const useStore = create<Store>()((set, get) => {
         const slow = typeof localStorage !== 'undefined' && localStorage.getItem('aurora-e2e-slow-search') === '1';
         if (slow) await new Promise((r) => setTimeout(r, 1800));
         if (!isCurrentGen(gen, deepSearchGen)) return;
-        // 演示盘：从当前位置递归全部子孙（与真盘「子树深搜」对齐）
+        // 演示盘：从当前位置递归全部子孙；多词 AND（名/路径子串）
         const tabState = tab();
         const here = loc(tabState);
         const rootId = here.t === 'node' ? here.id : ID.desktop;
-        const pool = descendantsAlive(get().nodes, rootId);
-        const ranked = rankSearchResults(pool.map((n) => ({ ...n, path: n.id })), q, 800);
+        const all = descendantsAlive(get().nodes, rootId);
+        const ranked = rankSearchResults(all.map((n) => ({ ...n, path: n.id })), q, 800);
         set({
           deepHits: ranked.map((n) => n.id),
-          deepMeta: { truncated: false, scanned: pool.length, source: 'demo-deep' },
+          deepMeta: { truncated: false, scanned: all.length, source: 'demo-deep' },
           deepSearching: false,
         });
         return;

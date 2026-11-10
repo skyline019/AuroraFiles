@@ -5,7 +5,7 @@ import path from 'node:path';
 import { configureIndexDir } from './persist.mjs';
 import { resetIndexPrefsCache } from './indexPrefs.mjs';
 import { disposeVolumeIndex, getIndex } from './fsIndex.mjs';
-import { isPathUnder, searchFiles, volumeRootOf } from './searchFiles.mjs';
+import { isPathUnder, nameMatchesQuery, searchFiles, volumeRootOf } from './searchFiles.mjs';
 
 describe('searchFiles helpers', () => {
   it('volumeRootOf', () => {
@@ -26,6 +26,12 @@ describe('searchFiles helpers', () => {
       expect(isPathUnder('/tmp/a/b', '/tmp/a')).toBe(true);
       expect(isPathUnder('/tmp/z', '/tmp/a')).toBe(false);
     }
+  });
+
+  it('nameMatchesQuery supports CJK and multi-token AND', () => {
+    expect(nameMatchesQuery('问卷汇总.docx', 'E:\\a\\问卷汇总.docx', '问')).toBe(true);
+    expect(nameMatchesQuery('report-final.pdf', 'E:\\a\\report-final.pdf', 'report final')).toBe(true);
+    expect(nameMatchesQuery('report.pdf', 'E:\\a\\report.pdf', 'report final')).toBe(false);
   });
 });
 
@@ -64,7 +70,7 @@ describe('searchFiles deep walk', () => {
       indexDepth: 0,
       forceWalk: true,
     });
-    expect(res.source).toBe('walk-fallback');
+    expect(res.source).toBe('walk-parallel');
     expect(res.items.some((it) => it.path === deepFile || it.name.includes('unique-needle-xyz'))).toBe(true);
     expect(res.scanned).toBeGreaterThan(12);
   });
@@ -105,7 +111,23 @@ describe('searchFiles deep walk', () => {
       maxScan: 5000,
       maxResults: 50,
     });
-    expect(res.source).toBe('walk-fallback');
+    expect(res.source).toBe('walk-parallel');
     expect(res.items.some((it) => it.name.includes('问'))).toBe(true);
+  });
+
+  it('multi-word AND finds nested file via parallel walk', async () => {
+    const deep = path.join(root, 'alpha', 'beta');
+    await fs.mkdir(deep, { recursive: true });
+    await fs.writeFile(path.join(deep, 'annual-report-2025.pdf'), 'x');
+    await fs.writeFile(path.join(deep, 'annual-summary.txt'), 'x');
+
+    const res = await searchFiles(root, 'annual report', {
+      forceWalk: true,
+      indexDepth: 0,
+      maxDepth: 16,
+      maxScan: 5000,
+    });
+    expect(res.items.some((it) => it.name.includes('annual-report'))).toBe(true);
+    expect(res.items.every((it) => /annual/i.test(it.name) && /report/i.test(it.name))).toBe(true);
   });
 });

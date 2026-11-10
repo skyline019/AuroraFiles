@@ -4,7 +4,8 @@
 |---|---|
 | [RELEASE.md](./RELEASE.md) | Build, pack, smoke, updater, signing |
 | [RELEASE_NOTES_v0.1.0.md](./RELEASE_NOTES_v0.1.0.md) | First public cut notes |
-| [RELEASE_NOTES_v0.1.7.md](./RELEASE_NOTES_v0.1.7.md) | **Current** release notes (deep search from cwd) |
+| [RELEASE_NOTES_v0.1.8.md](./RELEASE_NOTES_v0.1.8.md) | **Current** release notes (any-word zero-latency search) |
+| [RELEASE_NOTES_v0.1.7.md](./RELEASE_NOTES_v0.1.7.md) | Prior (deep search from cwd) |
 | [RELEASE_NOTES_v0.1.6.md](./RELEASE_NOTES_v0.1.6.md) | Prior (index status + unlimited maxScan) |
 | [RELEASE_NOTES_v0.1.5.md](./RELEASE_NOTES_v0.1.5.md) | Prior (context menu + e2e coverage) |
 | [RELEASE_NOTES_v0.1.4.md](./RELEASE_NOTES_v0.1.4.md) | Prior (docs + CI + first signed pack) |

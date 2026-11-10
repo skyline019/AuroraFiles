@@ -13,7 +13,7 @@ export function searchSourceLabel(source?: string, cached?: boolean): string {
   if (s.includes('frn')) return 'USN/FRN';
   if (s.includes('mtime')) return 'mtime 增量';
   if (s.includes('usn')) return 'USN 追赶';
-  if (s.includes('walk') || s === 'walk-fallback') return '扫盘';
+  if (s.includes('walk') || s === 'walk-fallback' || s === 'walk-parallel') return '扫盘';
   return s ? s : '扫盘';
 }
 
