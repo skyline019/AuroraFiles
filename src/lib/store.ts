@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { useMemo } from 'react';
 import {
   FSNode, TabState, Location, ID, nid, seedFS, visibleItems, poolFor,
-  extOf, categoryOf, nodeTitle, tagLabel,
+  descendantsAlive, extOf, categoryOf, nodeTitle, tagLabel,
 } from './fs';
 import { api, isElectron, REAL_DEMO } from './aurora';
 import { buildRealSkeleton, demoNodes, hydrateFolder, resolvePathId } from './realFs';
@@ -793,12 +793,15 @@ export const useStore = create<Store>()((set, get) => {
         const slow = typeof localStorage !== 'undefined' && localStorage.getItem('aurora-e2e-slow-search') === '1';
         if (slow) await new Promise((r) => setTimeout(r, 1800));
         if (!isCurrentGen(gen, deepSearchGen)) return;
+        // 演示盘：从当前位置递归全部子孙（与真盘「子树深搜」对齐）
         const tabState = tab();
-        const list = visibleItems(get().nodes, { ...tabState, search: q });
-        const ranked = rankSearchResults(list.map(n => ({ ...n, path: n.id })), q, 300);
+        const here = loc(tabState);
+        const rootId = here.t === 'node' ? here.id : ID.desktop;
+        const pool = descendantsAlive(get().nodes, rootId);
+        const ranked = rankSearchResults(pool.map((n) => ({ ...n, path: n.id })), q, 800);
         set({
-          deepHits: ranked.map(n => n.id),
-          deepMeta: { truncated: false, scanned: list.length },
+          deepHits: ranked.map((n) => n.id),
+          deepMeta: { truncated: false, scanned: pool.length, source: 'demo-deep' },
           deepSearching: false,
         });
         return;
@@ -818,7 +821,12 @@ export const useStore = create<Store>()((set, get) => {
       deepSearchGen = gen;
       set({ deepSearching: true });
       try {
-        const res = await api().search(searchRoot, q, { maxResults: 400, maxDepth: 6, maxScan: 20000 });
+        // 从当前位置深搜：深度 64、扫描无上限；后端用卷索引前缀过滤或立刻 Dirent walk
+        const res = await api().search(searchRoot, q, {
+          maxResults: 800,
+          maxDepth: 64,
+          maxScan: 0,
+        });
         if (!isCurrentGen(gen, deepSearchGen)) return;
         if (res.cancelled) {
           set({ deepSearching: false });

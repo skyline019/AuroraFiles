@@ -30,7 +30,7 @@ Aurora Files is a desktop file manager for **Windows x64**, built with Electron 
 
 > Prefer trying the UI in a browser first? `npm run dev` loads a **demo disk**. The desktop app (`npm run desktop`) is the real thing.
 
-**Canonical repo:** [skylinezhanghan-wq/AuroraFiles](https://github.com/skylinezhanghan-wq/AuroraFiles). Desktop builds from **v0.1.6** are Authenticode-signed as **CN=skyline019** (self-issued certificate).
+**Canonical repo:** [skylinezhanghan-wq/AuroraFiles](https://github.com/skylinezhanghan-wq/AuroraFiles). Desktop builds from **v0.1.7** are Authenticode-signed as **CN=skyline019** (self-issued certificate).
 
 ## Screenshots
 
@@ -55,7 +55,7 @@ Grab the latest build from [Releases](https://github.com/skylinezhanghan-wq/Auro
 | `AuroraFiles-Setup-*.exe` | NSIS installer (~148 MB, includes ffmpeg); signed `CN=skyline019` |
 | `AuroraFiles-Portable-*.exe` | Portable; signed `CN=skyline019` |
 
-SmartScreen may still warn on first run — the cert is self-issued, not an EV commercial identity. Release notes: [v0.1.6](docs/RELEASE_NOTES_v0.1.6.md).
+SmartScreen may still warn on first run — the cert is self-issued, not an EV commercial identity. Release notes: [v0.1.7](docs/RELEASE_NOTES_v0.1.7.md).
 
 ## Features
 

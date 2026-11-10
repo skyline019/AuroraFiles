@@ -1764,7 +1764,8 @@ export async function queryIndex(root, query, opts = {}) {
   if (!idx.ready && !idx.building) {
     void ensureIndexed(root, { maxDepth: opts.indexDepth ?? 8, maxScan: effectiveMaxScan(opts.maxScan) });
   }
-  if (!idx.ready && idx.scanned < 200) {
+  // 深搜路径请传 skipWarm:true，避免 warmShallow 阻塞「无延迟」查询
+  if (!opts.skipWarm && !idx.ready && idx.scanned < 200) {
     await warmShallow(idx, root, 2, 3000);
   }
   return idx.query(query, opts);

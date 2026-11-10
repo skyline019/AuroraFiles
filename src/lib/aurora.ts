@@ -47,7 +47,7 @@ export interface AuroraAPI {
   search: (
     root: string,
     query: string,
-    opts?: { maxResults?: number; maxDepth?: number; maxScan?: number },
+    opts?: { maxResults?: number; maxDepth?: number; maxScan?: number; forceWalk?: boolean },
   ) => Promise<{
     items: { path: string; name: string; kind: 'file' | 'folder'; size: number; modifiedAt: number }[];
     truncated: boolean;
