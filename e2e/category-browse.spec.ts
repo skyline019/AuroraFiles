@@ -9,7 +9,7 @@ test.describe('Category browse', () => {
     await gotoDesktop(page);
   });
 
-  test('image chip filters grid to images (+ folders)', async ({ page }) => {
+  test('image chip filters grid to images only (no folders)', async ({ page }) => {
     // 桌面无图片文件；进「图片」库
     await page.evaluate(() => {
       window.__aurora!.getState().navigate({ t: 'node', id: 'pics' });
@@ -27,8 +27,6 @@ test.describe('Category browse', () => {
 
     const kinds = await page.evaluate(() => {
       const st = window.__aurora!.getState();
-      const tab = st.tabs.find((t) => t.id === st.activeTabId)!;
-      // visibleItems path via selection pool: inspect rendered data-item names' nodes
       const ids = [...document.querySelectorAll('[data-item]')].map((el) => el.getAttribute('data-item')!);
       return ids.map((id) => {
         const n = st.nodes[id];
@@ -38,7 +36,8 @@ test.describe('Category browse', () => {
       }).filter(Boolean);
     });
     expect(kinds.length).toBeGreaterThan(0);
-    expect(kinds.every((k) => k === 'folder' || ['png', 'jpg', 'jpeg', 'gif', 'webp', 'heic', 'svg', 'psd'].includes(String(k).toLowerCase()))).toBe(true);
+    expect(kinds.every((k) => k !== 'folder')).toBe(true);
+    expect(kinds.every((k) => ['png', 'jpg', 'jpeg', 'gif', 'webp', 'heic', 'svg', 'psd'].includes(String(k).toLowerCase()))).toBe(true);
 
     await page.getByTestId('cat-chip-all').click();
     await expect.poll(async () =>
@@ -49,13 +48,13 @@ test.describe('Category browse', () => {
     ).toEqual([]);
   });
 
-  test('group toggle shows section headers in list', async ({ page }) => {
+  test('group toggle shows folder as its own section; clears on navigate', async ({ page }) => {
     await page.evaluate(() => {
       window.__aurora!.getState().navigate({ t: 'node', id: 'pics' });
       window.__aurora!.getState().patchTab({ view: 'list', groupByCategory: true });
     });
     await expect(page.getByTestId('cat-group-toggle')).toBeVisible();
-    await expect(page.locator('[data-testid^="section-header-"]').first()).toBeVisible({ timeout: 5_000 });
+    await expect(page.getByTestId('section-header-folder')).toBeVisible({ timeout: 5_000 });
 
     const first = page.locator('[data-testid^="section-header-"]').first();
     await first.click();
@@ -65,5 +64,17 @@ test.describe('Category browse', () => {
         return (st.tabs.find((t) => t.id === st.activeTabId)!.collapsedCategories || []).length;
       }),
     ).toBeGreaterThan(0);
+
+    // 换目录后分组不常驻
+    await page.evaluate(() => {
+      window.__aurora!.getState().navigate({ t: 'node', id: 'docs' });
+    });
+    await expect.poll(async () =>
+      page.evaluate(() => {
+        const st = window.__aurora!.getState();
+        const tab = st.tabs.find((t) => t.id === st.activeTabId)!;
+        return tab.groupByCategory === false && (tab.categoryFilter || []).length === 0;
+      }),
+    ).toBe(true);
   });
 });

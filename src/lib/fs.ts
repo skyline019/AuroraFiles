@@ -464,8 +464,9 @@ export function visibleItems(nodes: Record<string, FSNode>, tab: TabState): FSNo
   if (!tab.showHidden) list = list.filter(n => !n.hidden);
   if (tab.categoryFilter?.length) {
     const want = new Set(tab.categoryFilter);
+    const keepFolders = !!tab.groupByCategory;
     list = list.filter((n) => {
-      if (n.kind === 'folder' || n.kind === 'drive' || n.kind === 'special') return true;
+      if (n.kind === 'folder' || n.kind === 'drive' || n.kind === 'special') return keepFolders;
       return want.has(categoryOf(n.ext ?? extOf(n.name)));
     });
   }

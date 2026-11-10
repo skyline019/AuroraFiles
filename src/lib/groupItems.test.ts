@@ -49,14 +49,14 @@ describe('filterByCategories', () => {
     expect(filterByCategories(items, null as unknown as []).length).toBe(4);
   });
 
-  it('keeps folders and matching files', () => {
+  it('drops folders by default so chips are not polluted', () => {
     const out = filterByCategories(items, ['image']);
-    expect(out.map((n) => n.name).sort()).toEqual(['A', 'a.png']);
+    expect(out.map((n) => n.name)).toEqual(['a.png']);
   });
 
-  it('can drop folders', () => {
-    const out = filterByCategories(items, ['pdf'], { keepFolders: false });
-    expect(out.map((n) => n.name)).toEqual(['b.pdf']);
+  it('can keep folders for grouped mode', () => {
+    const out = filterByCategories(items, ['pdf'], { keepFolders: true });
+    expect(out.map((n) => n.name).sort()).toEqual(['A', 'b.pdf']);
   });
 });
 
@@ -66,6 +66,17 @@ describe('groupByCategory / flatten', () => {
     const sections = groupByCategory(items);
     expect(sections.map((s) => s.key)).toEqual(['folder', 'image', 'pdf']);
     expect(sections[0].label).toBe('文件夹');
+  });
+
+  it('puts all folders into a single folder section', () => {
+    const items = [folder('A'), folder('B'), file('a.png'), file('b.pdf')];
+    const sections = groupByCategory(items);
+    const folderSec = sections.find((s) => s.key === 'folder')!;
+    expect(folderSec.items.map((n) => n.name).sort()).toEqual(['A', 'B']);
+    for (const s of sections) {
+      if (s.key === 'folder') continue;
+      expect(s.items.every((n) => n.kind === 'file')).toBe(true);
+    }
   });
 
   it('flatten omits items when collapsed', () => {

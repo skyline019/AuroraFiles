@@ -391,7 +391,17 @@ export const useStore = create<Store>()((set, get) => {
       const t = tab();
       const history = [...t.history.slice(0, t.hi + 1), l];
       deepSearchGen = bumpGen(deepSearchGen);
-      patchActive({ history, hi: history.length - 1, selection: [], renaming: null, search: '' });
+      // 分类筛选/分组仅对本目录有效，换目录后复位（不常驻）
+      patchActive({
+        history,
+        hi: history.length - 1,
+        selection: [],
+        renaming: null,
+        search: '',
+        categoryFilter: [],
+        groupByCategory: false,
+        collapsedCategories: [],
+      });
       set({ deepHits: null, deepMeta: null, deepSearching: false });
       if (s.fsMode === 'real' && l.t === 'node') void get().refreshFolder(l.id);
     },
@@ -399,7 +409,15 @@ export const useStore = create<Store>()((set, get) => {
       const t = tab();
       if (t.hi > 0) {
         deepSearchGen = bumpGen(deepSearchGen);
-        patchActive({ hi: t.hi - 1, selection: [], renaming: null, search: '' });
+        patchActive({
+          hi: t.hi - 1,
+          selection: [],
+          renaming: null,
+          search: '',
+          categoryFilter: [],
+          groupByCategory: false,
+          collapsedCategories: [],
+        });
         set({ deepSearching: false });
         const l = loc({ ...t, hi: t.hi - 1 });
         if (get().fsMode === 'real' && l.t === 'node') void get().refreshFolder(l.id);
@@ -409,7 +427,15 @@ export const useStore = create<Store>()((set, get) => {
       const t = tab();
       if (t.hi < t.history.length - 1) {
         deepSearchGen = bumpGen(deepSearchGen);
-        patchActive({ hi: t.hi + 1, selection: [], renaming: null, search: '' });
+        patchActive({
+          hi: t.hi + 1,
+          selection: [],
+          renaming: null,
+          search: '',
+          categoryFilter: [],
+          groupByCategory: false,
+          collapsedCategories: [],
+        });
         set({ deepSearching: false });
         const l = loc({ ...t, hi: t.hi + 1 });
         if (get().fsMode === 'real' && l.t === 'node') void get().refreshFolder(l.id);
@@ -1228,7 +1254,10 @@ export const useActiveTab = (): TabState =>
 
 function applyTabCategoryFilter(list: FSNode[], tab: TabState): FSNode[] {
   if (!tab.categoryFilter?.length) return list;
-  return filterByCategories(list, tab.categoryFilter as Category[], { keepFolders: true });
+  // 分组开启时保留文件夹，使「文件夹」独立成节；纯筛选不混入文件夹
+  return filterByCategories(list, tab.categoryFilter as Category[], {
+    keepFolders: !!tab.groupByCategory,
+  });
 }
 
 function applyDeepSearchFilters(list: FSNode[], tab: TabState): FSNode[] {

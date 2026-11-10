@@ -28,14 +28,18 @@ export function nodeCategoryKey(n: FSNode): SectionKey {
   return categoryOf(n.ext ?? extOf(n.name));
 }
 
-/** 按类型筛选；keepFolders 默认 true（便于导航） */
+/**
+ * 按类型筛选。
+ * keepFolders 默认 false：文件夹只在「分组」模式下作为独立「文件夹」节出现，
+ * 不应混进每个分类筛选结果。
+ */
 export function filterByCategories(
   items: FSNode[],
   filter: Category[] | undefined | null,
   opts: { keepFolders?: boolean } = {},
 ): FSNode[] {
   if (!filter?.length) return items;
-  const keepFolders = opts.keepFolders !== false;
+  const keepFolders = opts.keepFolders === true;
   const want = new Set(filter);
   return items.filter((n) => {
     const key = nodeCategoryKey(n);
