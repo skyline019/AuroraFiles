@@ -25,7 +25,7 @@ let deepSearchGen = 0;
 let folderHydrateGen = 0;
 /** 输入防抖深搜：打字即走索引，无需 Enter */
 let deepSearchDebounce: ReturnType<typeof setTimeout> | null = null;
-const DEEP_SEARCH_DEBOUNCE_MS = 48;
+const DEEP_SEARCH_DEBOUNCE_MS = 120;
 /** 本轮深搜新插入的临时节点 id，clear 时 prune */
 let deepSearchTempIds = new Set<string>();
 
@@ -894,6 +894,8 @@ export const useStore = create<Store>()((set, get) => {
           maxResults: 800,
           maxDepth: 64,
           maxScan: 0,
+          // 禁止深搜路径触发整卷 ensureIndexed（曾导致与 walk 抢盘、数秒卡顿）
+          indexDepth: 0,
         });
         if (!isCurrentGen(gen, deepSearchGen)) return;
         if (res.cancelled) {

@@ -116,7 +116,7 @@ describe('searchFiles deep walk', () => {
     expect(res.items.some((it) => it.name.includes('问'))).toBe(true);
   });
 
-  it('ready index with entries trusts empty result (no volume walk)', async () => {
+  it('ready index with substantial entries trusts empty result (no volume walk)', async () => {
     const deep = path.join(root, '层1', '层2');
     await fs.mkdir(deep, { recursive: true });
     await fs.writeFile(path.join(deep, '问卷汇总.docx'), 'x');
@@ -125,15 +125,17 @@ describe('searchFiles deep walk', () => {
     const idx = getIndex(vol);
     idx.ready = true;
     idx.building = false;
-    // 封口索引有无关条目：查询「问」空命中时不得整树 walk
-    idx.upsert({
-      path: path.join(root, 'unrelated.txt'),
-      name: 'unrelated.txt',
-      kind: 'file',
-      size: 1,
-      modifiedAt: Date.now(),
-    });
-    expect(idx.entryCount()).toBeGreaterThan(0);
+    // 封口索引需 ≥500 条才信任空结果（避免损坏空 aidx）
+    for (let i = 0; i < 520; i++) {
+      idx.upsert({
+        path: path.join(root, `unrelated-${i}.txt`),
+        name: `unrelated-${i}.txt`,
+        kind: 'file',
+        size: 1,
+        modifiedAt: Date.now(),
+      });
+    }
+    expect(idx.entryCount()).toBeGreaterThanOrEqual(500);
 
     const t0 = Date.now();
     const res = await searchFiles(root, '问', {
@@ -146,6 +148,23 @@ describe('searchFiles deep walk', () => {
     expect(res.source).toMatch(/index/);
     expect(res.items.length).toBe(0);
     expect(ms).toBeLessThan(500);
+  });
+
+  it('does not kick ensureIndexed rebuild when indexDepth is 0/omitted', async () => {
+    const deep = path.join(root, 'a');
+    await fs.mkdir(deep, { recursive: true });
+    await fs.writeFile(path.join(deep, 'needle-xyz.txt'), 'x');
+
+    const t0 = Date.now();
+    const res = await searchFiles(root, 'needle-xyz', {
+      indexDepth: 0,
+      maxDepth: 8,
+      maxScan: 5000,
+      maxResults: 20,
+      deadlineMs: 0,
+    });
+    expect(res.items.some((it) => it.name.includes('needle-xyz'))).toBe(true);
+    expect(Date.now() - t0).toBeLessThan(3000);
   });
 
   it('multi-word AND finds nested file via parallel walk', async () => {

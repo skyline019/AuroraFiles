@@ -5,6 +5,7 @@
  * - 落盘：NDJSON 基线/delta + SQLite FTS5 侧车
  */
 import fs from 'node:fs/promises';
+import fssync from 'node:fs';
 import path from 'node:path';
 import { RbTree } from '../../shared/rbTree.mjs';
 import { PathSkipList } from '../../shared/pathSkip.mjs';
@@ -617,23 +618,54 @@ class VolumeIndex {
     const files = getIndexFilePaths(this.root);
     let res = null;
     let fromNdjson = false;
+
+    const ndjsonBytes = (() => {
+      try { return fssync.statSync(files.data).size; } catch { return 0; }
+    })();
+    const aidxBytes = (() => {
+      try { return fssync.statSync(files.aidx).size; } catch { return 0; }
+    })();
+
+    // 损坏/空壳 .aidx（例如仅百字节）若仍优先加载，会导致 ready 但几乎 0 条 → 深搜整卷 walk
+    const aidxTooSmall = aidxBytes > 0 && aidxBytes < 4096 && ndjsonBytes > 1_000_000;
+
+    if (aidxBytes > 0 && !aidxTooSmall) {
+      try {
+        res = await this._indexd.hydrateBin(files.aidx);
+        try {
+          await this._indexd.hydrateDelta(files.aidx);
+        } catch { /* no binary delta */ }
+        this.debt.owe('space', { reason: 'hydrate' });
+      } catch {
+        res = null;
+      }
+    }
+
+    let countGuess = Number(res?.hydrated) || 0;
     try {
-      await fs.access(files.aidx);
-      res = await this._indexd.hydrateBin(files.aidx);
-      // Binary sidecar `.aidx.d` (also applied inside hydrate_bin; explicit for clarity)
+      const st0 = await this._indexd.stats();
+      countGuess = Math.max(countGuess, Number(st0.count) || 0);
+    } catch { /* */ }
+
+    // aidx 加载后条目极少，但磁盘有大 NDJSON → 回退 NDJSON 并重写 aidx
+    const needNdjson = !res
+      || aidxTooSmall
+      || (ndjsonBytes > 1_000_000 && countGuess < 500);
+
+    if (needNdjson && ndjsonBytes > 0) {
       try {
-        await this._indexd.hydrateDelta(files.aidx);
-      } catch { /* no binary delta */ }
-      this.debt.owe('space', { reason: 'hydrate' });
-    } catch {
-      try {
-        await fs.access(files.data);
+        if (countGuess > 0 || res) {
+          try { await this._indexd.clear(); } catch { /* */ }
+        }
         res = await this._indexd.hydrateNdjson(files.data);
         fromNdjson = true;
       } catch {
-        return false;
+        if (!res) return false;
       }
+    } else if (!res) {
+      return false;
     }
+
     // Apply NDJSON delta ops if any (stream lines; do not keep full array)
     try {
       const deltaText = await fs.readFile(files.delta, 'utf8');
@@ -648,18 +680,20 @@ class VolumeIndex {
       this._indexd.flushBatchSync();
       await this._indexd.barrier();
     } catch { /* no delta */ }
-    // 缺 .aidx 时冷 hydrate 可达数分钟；立刻落盘二进制，下次秒开
-    if (fromNdjson) {
-      try {
-        await this._indexd.persistBin(files.aidx);
-        await fs.writeFile(files.delta, '');
-      } catch { /* best-effort */ }
-    }
+
     const st = await this._indexd.stats();
     this._nativeCount = st.count || res?.hydrated || 0;
     this.scanned = this._nativeCount;
     this.dirtyPersist = false;
     this.ready = true;
+
+    // 仅在从 NDJSON 恢复且条目足够时重写 aidx，避免把空壳写回磁盘
+    if (fromNdjson && this._nativeCount >= 500) {
+      try {
+        await this._indexd.persistBin(files.aidx);
+        await fs.writeFile(files.delta, '');
+      } catch { /* best-effort */ }
+    }
     return this._nativeCount > 0;
   }
 

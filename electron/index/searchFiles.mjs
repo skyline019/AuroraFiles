@@ -94,9 +94,12 @@ export async function searchFiles(rootPath, query, opts = {}) {
 
   const vol = volumeRootOf(root);
 
-  if (!forceWalk && opts.indexDepth !== 0) {
+  // 深搜默认不触达建索：旧逻辑 `indexDepth ?? 64` 会在每次查询时踢整卷 ensureIndexed，
+  // 与 walk 抢磁盘，交互可达数秒。仅当显式传入 indexDepth>0 才后台补建。
+  const indexDepthNum = Number(opts.indexDepth);
+  if (!forceWalk && indexDepthNum > 0) {
     void ensureIndexed(vol, {
-      maxDepth: opts.indexDepth ?? 64,
+      maxDepth: indexDepthNum,
       maxScan: opts.indexMaxScan,
       skipMode,
       followReparse: opts.followReparse === true,
@@ -130,8 +133,9 @@ export async function searchFiles(rootPath, query, opts = {}) {
           cached: !!indexed.cached,
         };
       }
-      // 封口索引有条目却无命中 → 信任空结果，勿整卷 walk（E: 可达数秒）
-      if (idx.ready && !idx.building && entryCount > 0) {
+      // 封口索引有实质条目却无命中 → 信任空结果，勿整卷 walk
+      // 阈值避免「损坏的空 aidx → ready+0/极少条」误信任后仍无结果又去 walk
+      if (idx.ready && !idx.building && entryCount >= 500) {
         return {
           items: [],
           truncated: false,
