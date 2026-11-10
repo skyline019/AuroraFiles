@@ -259,7 +259,7 @@ test.describe('Features coverage · search sort tags favorites', () => {
   });
 
   test('live filter search narrows selection pool', async ({ page }) => {
-    const search = page.locator('input[placeholder*="Enter 深度"]').first();
+    const search = page.locator('input[placeholder*="搜索"]').first();
     const before = await page.locator('[data-testid="grid-scroll"] [data-item]').count();
     await search.fill('灵感');
     await expect.poll(async () =>

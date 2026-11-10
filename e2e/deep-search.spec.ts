@@ -10,11 +10,10 @@ test.describe('Deep search from current location', () => {
     await gotoDesktop(page);
   });
 
-  test('Enter deep-search finds nested file under 设计稿', async ({ page }) => {
-    const search = page.locator('input[placeholder*="Enter 深度"]').first();
+  test('auto deep-search finds nested file under 设计稿 without Enter', async ({ page }) => {
+    const search = page.locator('input[placeholder*="搜索"]').first();
     await search.click();
     await search.fill('主视觉-v3');
-    await search.press('Enter');
 
     await expect(page.getByTestId('deep-search-busy')).toHaveCount(0, { timeout: 8_000 });
     await expect.poll(async () =>
@@ -39,7 +38,7 @@ test.describe('Deep search from current location', () => {
       window.__aurora!.getState().navigate({ t: 'node', id: 'docs' });
     });
 
-    const search = page.locator('input[placeholder*="Enter 深度"]').first();
+    const search = page.locator('input[placeholder*="搜索"]').first();
     await search.fill('产品白皮书');
     await search.press('Enter');
     await expect(page.getByTestId('deep-search-busy')).toHaveCount(0, { timeout: 8_000 });
@@ -59,8 +58,8 @@ test.describe('Deep search from current location', () => {
     expect(locId).toEqual({ t: 'node', id: 'docs' });
   });
 
-  test('live filter still works without Enter', async ({ page }) => {
-    const search = page.locator('input[placeholder*="Enter 深度"]').first();
+  test('typing schedules deep search without Enter', async ({ page }) => {
+    const search = page.locator('input[placeholder*="搜索"]').first();
     await search.fill('灵感');
     await expect.poll(async () =>
       page.evaluate(() => {
@@ -68,12 +67,16 @@ test.describe('Deep search from current location', () => {
         return st.tabs.find((t) => t.id === st.activeTabId)?.search;
       }),
     ).toBe('灵感');
+    await expect.poll(async () =>
+      page.evaluate(() => (window.__aurora!.getState().deepHits || []).length),
+      { timeout: 5_000 },
+    ).toBeGreaterThan(0);
     await search.fill('');
   });
 
   test('multi-word deep search AND from desktop', async ({ page }) => {
     // 桌面下「设计稿」内有 主视觉-v3.psd；多词应能命中
-    const search = page.locator('input[placeholder*="Enter 深度"]').first();
+    const search = page.locator('input[placeholder*="搜索"]').first();
     await search.fill('主视觉 v3');
     await search.press('Enter');
     await expect(page.getByTestId('deep-search-busy')).toHaveCount(0, { timeout: 8_000 });

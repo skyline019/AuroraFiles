@@ -27,7 +27,7 @@ test.describe('Aurora demo UX', () => {
     });
     await page.reload();
     await expect(page.getByRole('button', { name: '桌面' }).first()).toBeVisible({ timeout: 20_000 });
-    const search = page.locator('input[placeholder*="Enter 深度"]').first();
+    const search = page.locator('input[placeholder*="搜索"]').first();
     await search.click();
     await search.fill('报告');
     await search.press('Enter');

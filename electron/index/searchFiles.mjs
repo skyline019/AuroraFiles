@@ -4,7 +4,8 @@
  * 任意词无延迟策略：
  * 1. 卷索引有数据（ready 或已有条目）→ 立刻 contains 查询 + 当前位置前缀过滤
  * 2. 有命中则立即返回（不 await 建索）
- * 3. 无命中 → 并行 Dirent 深 walk（默认深 64 / 扫描无上限），满额早停
+ * 3. 索引已封口且有条目、查询为空 → 信任索引，禁止整卷 walk（避免数秒空转）
+ * 4. 仅索引未就绪 / 空库 → 并行 Dirent 深 walk（交互默认 deadline，forceWalk 可无上限）
  */
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -106,7 +107,8 @@ export async function searchFiles(rootPath, query, opts = {}) {
   // 索引只要有条目就先查（建索中也可瞬时出结果）
   if (!forceWalk) {
     const idx = getIndex(vol);
-    const hasData = idx.ready || idx.entryCount() > 0 || idx.scanned > 200;
+    const entryCount = idx.entryCount();
+    const hasData = idx.ready || entryCount > 0 || idx.scanned > 200;
     if (hasData) {
       const indexed = await queryIndex(vol, q, {
         maxResults: Math.min(maxResults * 4, 2000),
@@ -117,7 +119,7 @@ export async function searchFiles(rootPath, query, opts = {}) {
         return { items: [], truncated: true, scanned: indexed.scanned || 0, source: 'cancelled', cancelled: true };
       }
       const scoped = (indexed.items || []).filter((it) => isPathUnder(it.path, root));
-      // 有命中 → 立刻返回（无延迟）；仅当完全空才 walk 补召回
+      // 有命中 → 立刻返回（无延迟）
       if (scoped.length > 0) {
         const items = scoped.slice(0, maxResults);
         return {
@@ -128,24 +130,42 @@ export async function searchFiles(rootPath, query, opts = {}) {
           cached: !!indexed.cached,
         };
       }
+      // 封口索引有条目却无命中 → 信任空结果，勿整卷 walk（E: 可达数秒）
+      if (idx.ready && !idx.building && entryCount > 0) {
+        return {
+          items: [],
+          truncated: false,
+          scanned: indexed.scanned || entryCount,
+          source: `${indexed.source || 'index'}-under`,
+          cached: !!indexed.cached,
+        };
+      }
     }
   }
 
-  // 并行 Dirent walk：任意词子串匹配，满额 / 取消早停
+  // 并行 Dirent walk：任意词子串匹配，满额 / deadline / 取消早停
   const items = [];
   const seen = new Set();
   let truncated = false;
   let walkScanned = 0;
 
   const skipDir = (name) => skip.has(String(name).toLowerCase());
+  const cpus = os.cpus()?.length || 4;
+  // forceWalk / 显式 0 → 无 deadline；交互默认 2.5s 封顶，避免索引空库时卡死 UI
+  const deadlineMs = opts.deadlineMs === 0 || opts.deadlineMs === '0'
+    ? 0
+    : (Number(opts.deadlineMs) > 0
+      ? Number(opts.deadlineMs)
+      : (forceWalk ? 0 : 2500));
 
   const walkAbort = () => aborted() || items.length >= maxResults;
 
   const stats = await parallelDirentWalk(root, {
     maxDepth,
     maxScan,
-    concurrency: Math.min(24, Math.max(6, (os.cpus()?.length || 4) * 2)),
-    yieldEvery: 1024,
+    deadlineMs: deadlineMs || undefined,
+    concurrency: Math.min(48, Math.max(12, cpus * 3)),
+    yieldEvery: 2048,
     interactive: true,
     skipDir,
     followReparse: opts.followReparse === true,
@@ -184,6 +204,6 @@ export async function searchFiles(rootPath, query, opts = {}) {
     items,
     truncated,
     scanned: stats.scanned || walkScanned,
-    source: 'walk-parallel',
+    source: stats.timedOut ? 'walk-parallel-deadline' : 'walk-parallel',
   };
 }

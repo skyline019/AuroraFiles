@@ -298,9 +298,10 @@ export function Toolbar() {
           ref={searchRef}
           value={tab.search}
           onChange={e => {
-            // 改关键字：取消进行中的深搜并退出深搜结果，切回当前范围即时过滤
-            s.clearDeepSearch();
-            s.patchTab({ search: e.target.value });
+            const v = e.target.value;
+            s.patchTab({ search: v });
+            // 防抖深搜：有索引时瞬时出结果；勿先 clear 以免闪成「当前范围 0」
+            s.scheduleDeepSearch(v);
           }}
           onKeyDown={e => {
             if (e.key === 'Escape') {
@@ -318,8 +319,8 @@ export function Toolbar() {
               void s.runDeepSearch(tab.search || (e.target as HTMLInputElement).value);
             }
           }}
-          placeholder={nodeId ? `搜索“${s.nodes[nodeId]?.name ?? ''}” · Enter 深度` : '搜索 · Enter 深度'}
-          title="输入即时过滤当前视图；Enter 递归搜索子文件夹"
+          placeholder={nodeId ? `搜索“${s.nodes[nodeId]?.name ?? ''}”` : '搜索文件'}
+          title="输入即深度搜索（索引优先）；Enter 立即重搜"
           className="w-full min-w-0 bg-transparent text-[13px] text-zinc-800 outline-none placeholder:text-zinc-400 dark:text-zinc-100"
         />
         {s.deepSearching && (

@@ -1,7 +1,7 @@
 {
   "name": "aurora-files",
   "private": true,
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "Aurora Files — Apple-style file manager for Windows (Electron + real disk)",
   "author": "skylinezhanghan-wq",
   "type": "module",
@@ -34,6 +34,7 @@
     "test:smoke-win": "node scripts/win-unpacked-smoke.mjs",
     "test:real-search": "node scripts/real-search-e2e.mjs --assert",
     "test:real-search-cwd": "node scripts/real-search-cwd.mjs --assert --root E:\\canvas --query 问 --max-ms 12000",
+    "test:real-search-index": "node scripts/real-search-index.mjs --assert --root E:\\ --query 问 --max-ms 200",
     "test:index-bench": "node scripts/index-bench.mjs",
     "test:index-bench:json": "node scripts/index-bench.mjs --json release/index-bench.json",
     "test:perf-backend": "node scripts/perf/measure-backend.mjs",

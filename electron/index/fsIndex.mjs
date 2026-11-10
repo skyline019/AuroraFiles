@@ -616,6 +616,7 @@ class VolumeIndex {
     if (!(await this.enableNative())) return false;
     const files = getIndexFilePaths(this.root);
     let res = null;
+    let fromNdjson = false;
     try {
       await fs.access(files.aidx);
       res = await this._indexd.hydrateBin(files.aidx);
@@ -628,6 +629,7 @@ class VolumeIndex {
       try {
         await fs.access(files.data);
         res = await this._indexd.hydrateNdjson(files.data);
+        fromNdjson = true;
       } catch {
         return false;
       }
@@ -646,6 +648,13 @@ class VolumeIndex {
       this._indexd.flushBatchSync();
       await this._indexd.barrier();
     } catch { /* no delta */ }
+    // 缺 .aidx 时冷 hydrate 可达数分钟；立刻落盘二进制，下次秒开
+    if (fromNdjson) {
+      try {
+        await this._indexd.persistBin(files.aidx);
+        await fs.writeFile(files.delta, '');
+      } catch { /* best-effort */ }
+    }
     const st = await this._indexd.stats();
     this._nativeCount = st.count || res?.hydrated || 0;
     this.scanned = this._nativeCount;

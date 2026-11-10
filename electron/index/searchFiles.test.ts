@@ -103,16 +103,49 @@ describe('searchFiles deep walk', () => {
     const idx = getIndex(vol);
     idx.ready = true;
     idx.building = false;
-    // meta / native 皆空 → 索引「就绪但搜不到」
+    // meta / native 皆空 → 索引「就绪但 0 条目」仍 walk 补召回
 
     const res = await searchFiles(root, '问', {
       indexDepth: 0,
       maxDepth: 16,
       maxScan: 5000,
       maxResults: 50,
+      deadlineMs: 0,
     });
     expect(res.source).toBe('walk-parallel');
     expect(res.items.some((it) => it.name.includes('问'))).toBe(true);
+  });
+
+  it('ready index with entries trusts empty result (no volume walk)', async () => {
+    const deep = path.join(root, '层1', '层2');
+    await fs.mkdir(deep, { recursive: true });
+    await fs.writeFile(path.join(deep, '问卷汇总.docx'), 'x');
+
+    const vol = volumeRootOf(root);
+    const idx = getIndex(vol);
+    idx.ready = true;
+    idx.building = false;
+    // 封口索引有无关条目：查询「问」空命中时不得整树 walk
+    idx.upsert({
+      path: path.join(root, 'unrelated.txt'),
+      name: 'unrelated.txt',
+      kind: 'file',
+      size: 1,
+      modifiedAt: Date.now(),
+    });
+    expect(idx.entryCount()).toBeGreaterThan(0);
+
+    const t0 = Date.now();
+    const res = await searchFiles(root, '问', {
+      indexDepth: 0,
+      maxDepth: 64,
+      maxScan: 0,
+      maxResults: 50,
+    });
+    const ms = Date.now() - t0;
+    expect(res.source).toMatch(/index/);
+    expect(res.items.length).toBe(0);
+    expect(ms).toBeLessThan(500);
   });
 
   it('multi-word AND finds nested file via parallel walk', async () => {

@@ -247,7 +247,7 @@ test.describe('Full GUI chain · screenshots + video', () => {
     await shot(page, runDir, 'new-folder', steps);
 
     // —— Filter search (live) ——
-    const search = page.locator('input[placeholder*="Enter 深度"]').first();
+    const search = page.locator('input[placeholder*="搜索"]').first();
     await search.fill('报告');
     await page.waitForTimeout(250);
     await shot(page, runDir, 'filter-search', steps);

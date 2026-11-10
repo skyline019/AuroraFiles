@@ -223,7 +223,7 @@ export function LocationHeader({ count }: { count: number }) {
           {deepMeta
             ? ` · ${searchSourceLabel(deepMeta.source, deepMeta.cached)} ${deepMeta.scanned}${deepMeta.truncated ? '（已截断）' : ''}`
             : ''}
-          {!deep && ' · Enter 含子文件夹'}
+          {!deep && ' · 正在扩展到子文件夹…'}
         </span>
       ) : isTrash ? (
         <>

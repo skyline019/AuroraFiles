@@ -16,6 +16,9 @@ let folderRefreshGate: ReturnType<typeof createDebouncedRefCount> | null = null;
 let deepSearchGen = 0;
 /** 进夹代数：连点/快速切换只应用最新一次 hydrate */
 let folderHydrateGen = 0;
+/** 输入防抖深搜：打字即走索引，无需 Enter */
+let deepSearchDebounce: ReturnType<typeof setTimeout> | null = null;
+const DEEP_SEARCH_DEBOUNCE_MS = 48;
 
 function getFolderRefreshGate(set: (p: Partial<Store> | ((s: Store) => Partial<Store>)) => void) {
   if (!folderRefreshGate) {
@@ -156,7 +159,9 @@ interface Store {
   clearDeepSearch: () => void;
   /** 取消进行中的深搜，保留已有 deepHits（防闪空） */
   cancelDeepSearch: () => void;
-  runDeepSearch: (query: string) => Promise<void>;
+  runDeepSearch: (query: string, opts?: { quiet?: boolean }) => Promise<void>;
+  /** 输入防抖触发深搜（quiet）；空串清除 */
+  scheduleDeepSearch: (query: string) => void;
 }
 
 const loc = (t: TabState): Location => t.history[t.hi];
@@ -760,12 +765,20 @@ export const useStore = create<Store>()((set, get) => {
     },
 
     clearDeepSearch: () => {
+      if (deepSearchDebounce) {
+        clearTimeout(deepSearchDebounce);
+        deepSearchDebounce = null;
+      }
       deepSearchGen = bumpGen(deepSearchGen);
       if (isElectron()) void api().searchCancel().catch(() => undefined);
       set({ deepHits: null, deepMeta: null, deepSearching: false });
     },
 
     cancelDeepSearch: () => {
+      if (deepSearchDebounce) {
+        clearTimeout(deepSearchDebounce);
+        deepSearchDebounce = null;
+      }
       if (!get().deepSearching) return;
       deepSearchGen = bumpGen(deepSearchGen);
       if (isElectron()) void api().searchCancel().catch(() => undefined);
@@ -773,7 +786,28 @@ export const useStore = create<Store>()((set, get) => {
       get().toast('已取消深度搜索', 'info');
     },
 
-    runDeepSearch: async (query) => {
+    scheduleDeepSearch: (query) => {
+      if (deepSearchDebounce) {
+        clearTimeout(deepSearchDebounce);
+        deepSearchDebounce = null;
+      }
+      const q = String(query || '').trim();
+      if (!q) {
+        get().clearDeepSearch();
+        return;
+      }
+      deepSearchDebounce = setTimeout(() => {
+        deepSearchDebounce = null;
+        void get().runDeepSearch(q, { quiet: true });
+      }, DEEP_SEARCH_DEBOUNCE_MS);
+    },
+
+    runDeepSearch: async (query, opts) => {
+      const quiet = !!opts?.quiet;
+      if (deepSearchDebounce) {
+        clearTimeout(deepSearchDebounce);
+        deepSearchDebounce = null;
+      }
       const s = get();
       const q = query.trim();
       if (!q) { set({ deepHits: null, deepMeta: null, deepSearching: false }); return; }
@@ -812,7 +846,7 @@ export const useStore = create<Store>()((set, get) => {
       const rootId = location.t === 'node' ? location.id : ID.pc;
       const root = resolvePathId(rootId, s.quickMap);
       if (!isAbsPath(root) && rootId !== ID.pc) {
-        get().toast('当前位置无法深度搜索');
+        if (!quiet) get().toast('当前位置无法深度搜索');
         return;
       }
       const searchRoot = isAbsPath(root) ? root : (s.quickMap?.[ID.desktop]?.slice(0, 3) || 'C:\\');
@@ -862,17 +896,19 @@ export const useStore = create<Store>()((set, get) => {
           deepSearching: false,
           tabs: sanitize(get().tabs, nodes),
         });
-        const via = searchSourceLabel(res.source, cached);
-        get().toast(
-          res.truncated
-            ? `找到 ${hits.length}+ 项（${via}·已截断·${res.scanned}）`
-            : `搜索完成 · ${hits.length} 项（${via}·${res.scanned}）`,
-        );
+        if (!quiet) {
+          const via = searchSourceLabel(res.source, cached);
+          get().toast(
+            res.truncated
+              ? `找到 ${hits.length}+ 项（${via}·已截断·${res.scanned}）`
+              : `搜索完成 · ${hits.length} 项（${via}·${res.scanned}）`,
+          );
+        }
         void get().refreshIndexStatus();
       } catch (err) {
         if (!isCurrentGen(gen, deepSearchGen)) return;
         set({ deepSearching: false });
-        get().toast((err as Error).message || '搜索失败', 'error');
+        if (!quiet) get().toast((err as Error).message || '搜索失败', 'error');
       }
     },
 
