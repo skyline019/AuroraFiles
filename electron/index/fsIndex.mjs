@@ -666,7 +666,7 @@ class VolumeIndex {
     this.debt.pauseForQuery();
     try {
       if (this._backend === 'native' && this._indexd) {
-        return await this._queryNative(needle, limit);
+        return await this._queryNative(needle, limit, opts);
       }
       return this._queryInner(q, opts, needle, limit);
     } finally {
@@ -674,8 +674,10 @@ class VolumeIndex {
     }
   }
 
-  async _queryNative(needle, limit) {
-    const cacheKey = `n|${needle}|${limit}`;
+  async _queryNative(needle, limit, opts = {}) {
+    const cjk = /[\u3400-\u9fff\uf900-\ufaff]/.test(needle);
+    const preferContains = !!opts.preferContains || cjk || [...needle].length <= 2;
+    const cacheKey = `n|${needle}|${limit}|${preferContains ? 'c' : 'p'}`;
     const cached = this.queryCache.get(cacheKey);
     if (cached) {
       return { items: cached.items, truncated: cached.truncated, source: cached.source, scanned: this.scanned, cached: true };
@@ -691,7 +693,7 @@ class VolumeIndex {
 
     // indexd handles multi-token AND + prefix/contains. Optional FTS only when enabled.
     const multi = /\s/.test(needle);
-    if (multi && this.fts.ok && this.fts.size() > 0) {
+    if (multi && !cjk && this.fts.ok && this.fts.size() > 0) {
       for (const row of this.fts.search(needle, limit)) {
         if (pushItem({ path: row.path, name: row.name || '' })) {
           return finish(this, cacheKey, items, true, 'index-fts-native');
@@ -701,11 +703,9 @@ class VolumeIndex {
     if (items.length < limit) {
       const pathish = needle.includes('\\') || needle.includes('/');
       const want = limit - items.length;
-      // Pass full needle — indexd splits tokens and filters (multi-word without FTS)
-      let res = pathish || multi
-        ? await this._indexd.query(needle, { limit: want, mode: 'contains' })
-        : await this._indexd.query(needle, { limit: want, mode: 'prefix' });
-      if (!(res.items || []).length && !pathish && !multi) {
+      const mode = pathish || multi || preferContains ? 'contains' : 'prefix';
+      let res = await this._indexd.query(needle, { limit: want, mode });
+      if (!(res.items || []).length && mode === 'prefix') {
         res = await this._indexd.query(needle, { limit: want, mode: 'contains' });
       }
       for (const it of res.items || []) {
@@ -716,7 +716,8 @@ class VolumeIndex {
   }
 
   _queryInner(q, opts, needle, limit) {
-    const cacheKey = `${needle}|${limit}`;
+    const cjk = /[\u3400-\u9fff\uf900-\ufaff]/.test(needle);
+    const cacheKey = `${needle}|${limit}|${cjk ? 'cjk' : 'a'}`;
     const cached = this.queryCache.get(cacheKey);
     if (cached) {
       return { items: cached.items, truncated: cached.truncated, source: cached.source, scanned: this.scanned, cached: true };
@@ -725,8 +726,8 @@ class VolumeIndex {
     const seen = new Set();
     const items = [];
 
-    // FTS 优先（大库 / lean / 多词 / 已有 FTS 数据）
-    if (this.fts.ok && (
+    // FTS 优先（大库 / lean / 多词 / 已有 FTS 数据）；CJK 单字/词跳过 FTS（unicode61 易漏）
+    if (!cjk && this.fts.ok && (
       this._lean
       || this.meta.size > 20_000
       || needle.includes(' ')

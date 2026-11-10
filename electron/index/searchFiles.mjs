@@ -107,24 +107,29 @@ export async function searchFiles(rootPath, query, opts = {}) {
 
   if (!forceWalk) {
     const idx = getIndex(vol);
-    // 仅当卷索引已就绪且非冷建中：瞬时前缀过滤（当前位置子树）
+    // 卷索引就绪：先瞬时按当前位置过滤。
+    // 关键：命中为空时必须回退 walk——索引可能不完整，或 CJK/短词 FTS 漏召回。
     if (idx.ready && !idx.building) {
       const indexed = await queryIndex(vol, q, {
-        maxResults: Math.min(maxResults * 4, 2000), // 多取再过滤到当前目录
+        maxResults: Math.min(maxResults * 4, 2000),
         skipWarm: true,
+        preferContains: true,
       });
       if (aborted()) {
         return { items: [], truncated: true, scanned: indexed.scanned || 0, source: 'cancelled', cancelled: true };
       }
       const scoped = (indexed.items || []).filter((it) => isPathUnder(it.path, root));
-      const items = scoped.slice(0, maxResults);
-      return {
-        items,
-        truncated: scoped.length > maxResults || !!indexed.truncated,
-        scanned: indexed.scanned || scoped.length,
-        source: `${indexed.source || 'index'}-under`,
-        cached: !!indexed.cached,
-      };
+      if (scoped.length > 0) {
+        const items = scoped.slice(0, maxResults);
+        return {
+          items,
+          truncated: scoped.length > maxResults || !!indexed.truncated,
+          scanned: indexed.scanned || scoped.length,
+          source: `${indexed.source || 'index'}-under`,
+          cached: !!indexed.cached,
+        };
+      }
+      // 空命中 → 继续下方 walk（勿把「索引未收录」当成「没有文件」）
     }
   }
 

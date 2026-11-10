@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { configureIndexDir } from './persist.mjs';
 import { resetIndexPrefsCache } from './indexPrefs.mjs';
-import { disposeVolumeIndex } from './fsIndex.mjs';
+import { disposeVolumeIndex, getIndex } from './fsIndex.mjs';
 import { isPathUnder, searchFiles, volumeRootOf } from './searchFiles.mjs';
 
 describe('searchFiles helpers', () => {
@@ -85,5 +85,27 @@ describe('searchFiles deep walk', () => {
     });
     expect(res.items.length).toBe(1);
     expect(isPathUnder(res.items[0].path, a)).toBe(true);
+  });
+
+  it('CJK miss on ready-empty index falls back to deep walk', async () => {
+    const deep = path.join(root, '层1', '层2');
+    await fs.mkdir(deep, { recursive: true });
+    const hit = path.join(deep, '问卷汇总.docx');
+    await fs.writeFile(hit, 'x');
+
+    const vol = volumeRootOf(root);
+    const idx = getIndex(vol);
+    idx.ready = true;
+    idx.building = false;
+    // meta / native 皆空 → 索引「就绪但搜不到」
+
+    const res = await searchFiles(root, '问', {
+      indexDepth: 0,
+      maxDepth: 16,
+      maxScan: 5000,
+      maxResults: 50,
+    });
+    expect(res.source).toBe('walk-fallback');
+    expect(res.items.some((it) => it.name.includes('问'))).toBe(true);
   });
 });
