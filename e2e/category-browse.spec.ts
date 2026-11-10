@@ -48,7 +48,7 @@ test.describe('Category browse', () => {
     ).toEqual([]);
   });
 
-  test('group toggle shows folder as its own section; clears on navigate', async ({ page }) => {
+  test('group toggle shows folder as its own section; keeps on navigate', async ({ page }) => {
     await page.evaluate(() => {
       window.__aurora!.getState().navigate({ t: 'node', id: 'pics' });
       window.__aurora!.getState().patchTab({ view: 'list', groupByCategory: true });
@@ -65,7 +65,7 @@ test.describe('Category browse', () => {
       }),
     ).toBeGreaterThan(0);
 
-    // 换目录后分组不常驻
+    // 换目录后分组常驻；筛选/折叠复位
     await page.evaluate(() => {
       window.__aurora!.getState().navigate({ t: 'node', id: 'docs' });
     });
@@ -73,9 +73,66 @@ test.describe('Category browse', () => {
       page.evaluate(() => {
         const st = window.__aurora!.getState();
         const tab = st.tabs.find((t) => t.id === st.activeTabId)!;
-        return tab.groupByCategory === false && (tab.categoryFilter || []).length === 0;
+        return tab.groupByCategory === true
+          && (tab.categoryFilter || []).length === 0
+          && (tab.collapsedCategories || []).length === 0;
       }),
     ).toBe(true);
+  });
+
+  test('folder-only volume still shows group toggle (E-root contract)', async ({ page }) => {
+    // 模拟真实 E: 卷根：几乎全是文件夹 → 以前 category-bar 整条消失
+    await page.evaluate(() => {
+      const api = window.__aurora!;
+      const st = api.getState();
+      const nodes = { ...st.nodes };
+      const root = 'vol-e-root';
+      const now = Date.now();
+      nodes[root] = {
+        id: root,
+        name: '本地磁盘 (E:)',
+        kind: 'drive',
+        parentId: 'pc',
+        childrenIds: [],
+        size: 0,
+        createdAt: now,
+        modifiedAt: now,
+        accessedAt: now,
+        tags: [],
+        system: true,
+      };
+      const kids: string[] = [];
+      for (const name of ['Agent', 'AndroidProjects', 'JavaProjects', 'Program Files', 'Tools']) {
+        const id = `${root}/${name}`;
+        nodes[id] = {
+          id,
+          name,
+          kind: 'folder',
+          parentId: root,
+          childrenIds: [],
+          size: 0,
+          createdAt: now,
+          modifiedAt: now,
+          accessedAt: now,
+          tags: [],
+        };
+        kids.push(id);
+      }
+      nodes[root] = { ...nodes[root], childrenIds: kids };
+      api.setState({ nodes, fsMode: 'demo', refreshFolder: async () => undefined } as never);
+      api.getState().navigate({ t: 'node', id: root });
+      api.getState().patchTab({ view: 'grid', groupByCategory: false, categoryFilter: [] });
+    });
+    await expect(page.getByTestId('category-bar')).toBeVisible({ timeout: 5_000 });
+    await expect(page.getByTestId('cat-group-toggle')).toBeVisible();
+    await page.getByTestId('cat-group-toggle').click();
+    await expect.poll(async () =>
+      page.evaluate(() => {
+        const st = window.__aurora!.getState();
+        return st.tabs.find((t) => t.id === st.activeTabId)!.groupByCategory;
+      }),
+    ).toBe(true);
+    await expect(page.getByTestId('section-header-folder')).toBeVisible({ timeout: 5_000 });
   });
 
   test('exit search keeps groupBy; deep hits keep folders before files', async ({ page }) => {

@@ -124,7 +124,11 @@ export async function searchFiles(rootPath, query, opts = {}) {
       const scoped = (indexed.items || []).filter((it) => isPathUnder(it.path, root));
       // 有命中 → 立刻返回（无延迟）
       if (scoped.length > 0) {
-        const items = scoped.slice(0, maxResults);
+        // 索引为省空间会 delete kind==='file'；对外必须归一，否则 UI 置顶/分组失效
+        const items = scoped.slice(0, maxResults).map((it) => ({
+          ...it,
+          kind: it.kind === 'folder' ? 'folder' : 'file',
+        }));
         return {
           items,
           truncated: scoped.length > maxResults || !!indexed.truncated || (!idx.ready || !!idx.building),

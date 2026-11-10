@@ -392,7 +392,7 @@ export const useStore = create<Store>()((set, get) => {
       const t = tab();
       const history = [...t.history.slice(0, t.hi + 1), l];
       deepSearchGen = bumpGen(deepSearchGen);
-      // 分类筛选/分组仅对本目录有效，换目录后复位（不常驻）
+      // 筛选/折叠跟目录走；分组开关常驻（会话级），换 E: 卷根等仍保持
       patchActive({
         history,
         hi: history.length - 1,
@@ -400,7 +400,6 @@ export const useStore = create<Store>()((set, get) => {
         renaming: null,
         search: '',
         categoryFilter: [],
-        groupByCategory: false,
         collapsedCategories: [],
       });
       set({ deepHits: null, deepMeta: null, deepSearching: false });
@@ -410,7 +409,7 @@ export const useStore = create<Store>()((set, get) => {
       const t = tab();
       if (t.hi > 0) {
         deepSearchGen = bumpGen(deepSearchGen);
-        // 仅退出搜索/换历史条目：保留分组；换目录进夹由 navigate 复位
+        // 历史前进/后退：保留分组；清搜索命中
         patchActive({ hi: t.hi - 1, selection: [], renaming: null, search: '' });
         set({ deepHits: null, deepMeta: null, deepSearching: false });
         const l = loc({ ...t, hi: t.hi - 1 });
@@ -923,14 +922,16 @@ export const useStore = create<Store>()((set, get) => {
         for (const it of ranked) {
           const prev = nodes[it.path];
           const isNew = !prev;
+          // 索引命中常省略 kind（表示 file）；必须归一，否则 foldersFirstStable 会空转
+          const kind = it.kind === 'folder' ? 'folder' : 'file';
           nodes[it.path] = {
             id: it.path,
             name: it.name,
-            kind: it.kind,
+            kind,
             parentId: prev?.parentId ?? rootId,
             // 轻量：不复制大 childrenIds；临时节点空数组
             childrenIds: prev?.childrenIds?.length ? prev.childrenIds : [],
-            ext: it.kind === 'file' ? it.name.split('.').pop()?.toLowerCase() : undefined,
+            ext: kind === 'file' ? it.name.split('.').pop()?.toLowerCase() : undefined,
             size: it.size,
             createdAt: prev?.createdAt ?? it.modifiedAt,
             modifiedAt: it.modifiedAt,

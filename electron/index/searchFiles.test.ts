@@ -182,4 +182,47 @@ describe('searchFiles deep walk', () => {
     expect(res.items.some((it) => it.name.includes('annual-report'))).toBe(true);
     expect(res.items.every((it) => /annual/i.test(it.name) && /report/i.test(it.name))).toBe(true);
   });
+
+  it('INDEX CONTRACT: omitted file kind is restored to kind=file on index hits', async () => {
+    // 复现：fsIndex.upsert 删掉 kind==='file'；IPC 层必须归一，否则 UI 文件夹/文件交错
+    const folderHit = path.join(root, 'w-folder');
+    await fs.mkdir(folderHit, { recursive: true });
+    const fileHit = path.join(root, 'w-file.txt');
+    await fs.writeFile(fileHit, 'x');
+
+    const vol = volumeRootOf(root);
+    const idx = getIndex(vol);
+    idx.ready = true;
+    idx.building = false;
+    idx.upsert({ path: folderHit, name: 'w-folder', kind: 'folder', size: 0, modifiedAt: Date.now() });
+    idx.upsert({ path: fileHit, name: 'w-file.txt', kind: 'file', size: 1, modifiedAt: Date.now() });
+    // 灌满到信任阈值，避免空/薄索引走 walk
+    for (let i = 0; i < 520; i++) {
+      idx.upsert({
+        path: path.join(root, `pad-${i}.bin`),
+        name: `pad-${i}.bin`,
+        kind: 'file',
+        size: 1,
+        modifiedAt: Date.now(),
+      });
+    }
+
+    // 索引内部：file 的 kind 被 upsert 删掉
+    const storedFile = idx.meta.get(fileHit.toLowerCase()) as { kind?: string } | undefined;
+    expect(storedFile).toBeTruthy();
+    expect(storedFile!.kind).toBeUndefined();
+
+    const res = await searchFiles(root, 'w-', {
+      indexDepth: 0,
+      maxDepth: 8,
+      maxScan: 5000,
+      maxResults: 50,
+    });
+    expect(res.source).toMatch(/index/);
+    const eqPath = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
+    const folderItem = res.items.find((it) => eqPath(it.path, folderHit));
+    const fileItem = res.items.find((it) => eqPath(it.path, fileHit));
+    expect(folderItem?.kind).toBe('folder');
+    expect(fileItem?.kind).toBe('file');
+  });
 });

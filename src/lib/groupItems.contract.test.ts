@@ -102,6 +102,19 @@ describe('CONTRACT foldersFirstStable', () => {
     assertStableWithinKind(input, out);
     expect(out.map((n) => n.id)).toEqual(['d1', 'd2', 'f1', 'f2']);
   });
+
+  it('INDEX CONTRACT: omitted kind means file — must still partition (regresses D: cache mix)', () => {
+    // fsIndex.upsert 会 delete kind==='file'；旧 foldersFirstStable 用 kind==='file' 导致 files=[] 原样返回
+    const mkOmitting = (id: string, name: string): FSNode => {
+      const n = file(name, id);
+      delete (n as { kind?: string }).kind;
+      return n;
+    };
+    const input = [mkOmitting('a', 'a.wav'), folder('B', 'B'), mkOmitting('c', 'c.py'), folder('D', 'D')];
+    const out = foldersFirstStable(input);
+    assertRequiresBothKindsAndPartitioned(out);
+    expect(out.map((n) => n.id)).toEqual(['B', 'D', 'a', 'c']);
+  });
 });
 
 describe('CONTRACT filterByCategories', () => {

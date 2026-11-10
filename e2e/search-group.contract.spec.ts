@@ -11,7 +11,8 @@ async function renderedKinds(page: Page) {
     return ids.map((id) => {
       const n = st.nodes[id];
       if (!n) return null;
-      return n.kind === 'file' ? 'file' : 'folder';
+      const folder = n.kind === 'folder' || n.kind === 'drive' || n.kind === 'special';
+      return folder ? 'folder' : 'file';
     }).filter(Boolean) as Array<'file' | 'folder'>;
   });
 }
@@ -168,7 +169,7 @@ test.describe('Search×Group contracts', () => {
     expect(tab.categoryFilter).toEqual(['pdf']);
   });
 
-  test('navigate resets group; chip filter without group excludes folders in DOM', async ({ page }) => {
+  test('navigate keeps group; chip filter without group excludes folders in DOM', async ({ page }) => {
     await page.evaluate(() => {
       const st = window.__aurora!.getState();
       st.navigate({ t: 'node', id: 'pics' });
@@ -181,11 +182,13 @@ test.describe('Search×Group contracts', () => {
       const st = window.__aurora!.getState();
       return st.tabs.find((t) => t.id === st.activeTabId)!;
     });
-    expect(tab.groupByCategory).toBe(false);
+    expect(tab.groupByCategory).toBe(true);
     expect(tab.categoryFilter).toEqual([]);
 
     await page.evaluate(() => {
-      window.__aurora!.getState().navigate({ t: 'node', id: 'pics' });
+      const st = window.__aurora!.getState();
+      st.navigate({ t: 'node', id: 'pics' });
+      st.patchTab({ groupByCategory: false, categoryFilter: [] });
     });
     await lockDemo(page);
     await expect(page.getByTestId('category-bar')).toBeVisible({ timeout: 8_000 });

@@ -1,7 +1,7 @@
 {
   "name": "aurora-files",
   "private": true,
-  "version": "0.1.13",
+  "version": "0.1.14",
   "description": "Aurora Files — Apple-style file manager for Windows (Electron + real disk)",
   "author": "skylinezhanghan-wq",
   "type": "module",
@@ -28,6 +28,7 @@
     "test:e2e": "playwright test",
     "test:e2e:index": "playwright test e2e/index-status.spec.ts",
     "test:e2e:features": "playwright test e2e/features-coverage.spec.ts e2e/context-menu.spec.ts e2e/demo-ux.spec.ts",
+    "test:e2e:group-persist": "cross-env AURORA_PERF_RUN_ID=group-persist-latest playwright test e2e/group-persist.visual.spec.ts e2e/search-group.contract.spec.ts e2e/category-browse.spec.ts",
     "test:e2e:full-gui": "cross-env AURORA_PERF_RUN_ID=gui-full-latest playwright test e2e/full-gui.spec.ts",
     "test:e2e:all-visual": "cross-env AURORA_ELECTRON= AURORA_PERF_RUN_ID=gui-full-latest playwright test e2e/full-gui.spec.ts e2e/ui-visual-check.spec.ts e2e/index-status.spec.ts e2e/demo-ux.spec.ts e2e/preview-media.spec.ts e2e/context-menu.spec.ts e2e/features-coverage.spec.ts",
     "test:e2e:ui": "playwright test --ui",

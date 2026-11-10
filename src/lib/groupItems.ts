@@ -23,8 +23,13 @@ export type BrowseRow =
   | { t: 'header'; key: SectionKey; label: string; count: number; collapsed: boolean }
   | { t: 'item'; node: FSNode };
 
+/** 索引侧常省略 kind==='file'（省空间）；缺省一律当文件 */
+export function isFolderLike(n: Pick<FSNode, 'kind'>): boolean {
+  return n.kind === 'folder' || n.kind === 'drive' || n.kind === 'special';
+}
+
 export function nodeCategoryKey(n: FSNode): SectionKey {
-  if (n.kind === 'folder' || n.kind === 'drive' || n.kind === 'special') return 'folder';
+  if (isFolderLike(n)) return 'folder';
   return categoryOf(n.ext ?? extOf(n.name));
 }
 
@@ -120,14 +125,15 @@ export function presentChipCategories(items: FSNode[]): Category[] {
 /**
  * 稳定分区：文件夹（含 drive/special）在前、文件在后，各自保持原相对顺序。
  * 深搜相关度序不得把文件夹/文件交错。
+ * 注意：索引命中常省略 kind（表示 file）；必须用 isFolderLike，不能写 kind==='file'。
  */
 export function foldersFirstStable(items: FSNode[]): FSNode[] {
   if (items.length < 2) return items;
   const folders: FSNode[] = [];
   const files: FSNode[] = [];
   for (const n of items) {
-    if (n.kind === 'file') files.push(n);
-    else folders.push(n);
+    if (isFolderLike(n)) folders.push(n);
+    else files.push(n);
   }
   if (!folders.length || !files.length) return items;
   return folders.concat(files);

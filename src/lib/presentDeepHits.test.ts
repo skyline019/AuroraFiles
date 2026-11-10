@@ -185,4 +185,20 @@ describe('CONTRACT presentDeepHits', () => {
     expect(out[0].id).toBe('F');
     assertStableWithinKind(input, out);
   });
+
+  it('INDEX CONTRACT: nodes with omitted kind still folder-first via presentDeepHits', () => {
+    const a = file('a', 'a.wav');
+    const c = file('c', 'c.py');
+    delete (a as { kind?: string }).kind;
+    delete (c as { kind?: string }).kind;
+    const nodes: Record<string, FSNode> = {
+      a,
+      b: folder('b', 'B'),
+      c,
+      d: folder('d', 'D'),
+    };
+    const out = presentDeepHits(nodes, ['a', 'b', 'c', 'd'], tab({ search: 'w' }));
+    assertRequiresBothKindsAndPartitioned(out);
+    expect(out.map((n) => n.id)).toEqual(['b', 'd', 'a', 'c']);
+  });
 });

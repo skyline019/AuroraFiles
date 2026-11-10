@@ -14,9 +14,7 @@ export function CategoryBar() {
 
   const chips = useMemo(() => presentChipCategories(pool), [pool]);
   const filter = tab.categoryFilter ?? [];
-  const show = chips.length > 0 || filter.length > 0 || tab.groupByCategory;
-  if (!show) return null;
-
+  // 分组开关必须常驻：卷根/仅文件夹目录没有类型芯片时也要能开「文件夹」节
   const allActive = filter.length === 0;
 
   const toggle = (cat: Category) => {

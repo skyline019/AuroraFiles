@@ -1,5 +1,5 @@
 /**
- * Store 生命周期契约：退出搜索保留分组；navigate 复位；back/forward 不剥分组
+ * Store 生命周期契约：退出搜索保留分组；navigate 保留分组（常驻）；back/forward 不剥分组
  */
 import { beforeEach, describe, expect, it } from 'vitest';
 import { useStore } from './store';
@@ -22,6 +22,13 @@ function resetDemoAt(nodeId: string) {
     booting: false,
   });
   useStore.getState().navigate({ t: 'node', id: nodeId });
+  // navigate 不再清 groupBy；显式复位会话偏好
+  useStore.getState().patchTab({
+    groupByCategory: false,
+    categoryFilter: [],
+    collapsedCategories: [],
+    search: '',
+  });
 }
 
 describe('CONTRACT search/group lifecycle', () => {
@@ -62,7 +69,7 @@ describe('CONTRACT search/group lifecycle', () => {
     expect(activeTab().groupByCategory).toBe(true);
   });
 
-  it('navigate into another folder resets group/filter/collapse/search/hits', () => {
+  it('navigate into another folder keeps groupBy; resets filter/collapse/search/hits', () => {
     const st = useStore.getState();
     st.patchTab({
       groupByCategory: true,
@@ -75,7 +82,7 @@ describe('CONTRACT search/group lifecycle', () => {
     st.navigate({ t: 'node', id: ID.docs });
 
     const tab = activeTab();
-    expect(tab.groupByCategory).toBe(false);
+    expect(tab.groupByCategory).toBe(true);
     expect(tab.categoryFilter).toEqual([]);
     expect(tab.collapsedCategories).toEqual([]);
     expect(tab.search).toBe('');
@@ -83,12 +90,19 @@ describe('CONTRACT search/group lifecycle', () => {
     expect(useStore.getState().deepSearching).toBe(false);
   });
 
+  it('navigate to drive E keeps groupBy (常驻)', () => {
+    const st = useStore.getState();
+    st.patchTab({ groupByCategory: true, categoryFilter: ['image'] });
+    st.navigate({ t: 'node', id: ID.e });
+    const tab = activeTab();
+    expect(tab.history[tab.hi]).toEqual({ t: 'node', id: ID.e });
+    expect(tab.groupByCategory).toBe(true);
+    expect(tab.categoryFilter).toEqual([]);
+  });
+
   it('back preserves groupBy that was set after arriving (does not strip)', () => {
     const st = useStore.getState();
-    // pics → docs (navigate clears group)
     st.navigate({ t: 'node', id: ID.docs });
-    expect(activeTab().groupByCategory).toBe(false);
-    // user turns group on in docs
     st.patchTab({ groupByCategory: true, categoryFilter: ['pdf'], collapsedCategories: ['folder'] });
     st.back();
     // back must NOT clear group flags

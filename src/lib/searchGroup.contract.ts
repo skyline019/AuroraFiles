@@ -8,7 +8,8 @@ import type { BrowseRow, CategorySection } from './groupItems';
 export type KindSlot = 'folder' | 'file';
 
 export function kindSlot(n: Pick<FSNode, 'kind'>): KindSlot {
-  return n.kind === 'file' ? 'file' : 'folder';
+  // 与 isFolderLike 对齐：缺省 kind / 'file' → file；folder|drive|special → folder
+  return n.kind === 'folder' || n.kind === 'drive' || n.kind === 'special' ? 'folder' : 'file';
 }
 
 /** 契约：不得出现 file 出现在任一 folder 之前的交错（允许仅一侧存在） */
