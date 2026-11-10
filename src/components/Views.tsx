@@ -3,9 +3,11 @@ import {
   ChevronUp, ChevronDown, FolderOpen, SearchX, Trash2, RotateCcw, Folder as FolderLucide, Loader2, X,
 } from 'lucide-react';
 import { deepSearchBusyLabel } from '@/lib/previewFail';
-import { useStore, useActiveTab, useItems, useCurrentLocation, currentNodeId } from '@/lib/store';
+import { useStore, useActiveTab, useItems, useBrowseRows, useCurrentLocation, currentNodeId } from '@/lib/store';
 import { FileGlyph, FolderIcon, ImageThumb, TagDot, DriveIcon } from './icons';
 import { FSNode, ID, SortKey, formatSize, formatDate, kindLabel } from '@/lib/fs';
+import { CATEGORY_DOT } from '@/lib/categoryLabel';
+import { groupByCategory, type BrowseRow, type SectionKey } from '@/lib/groupItems';
 import { useVirtualWindow } from '@/hooks/useVirtualWindow';
 import { useGridWindow } from '@/hooks/useRafViewport';
 import { useEnsureSelectionVisible, listScrollToIndex } from '@/hooks/useEnsureSelectionVisible';
@@ -14,6 +16,44 @@ import { cn } from '@/utils/cn';
 import { searchSourceLabel } from '@/lib/indexLabel';
 
 const LIST_ROW_H = 32;
+
+function toggleCollapsed(key: SectionKey) {
+  const st = useStore.getState();
+  const tab = st.tabs.find((t) => t.id === st.activeTabId);
+  if (!tab) return;
+  const cur = new Set(tab.collapsedCategories ?? []);
+  if (cur.has(key)) cur.delete(key);
+  else cur.add(key);
+  st.patchTab({ collapsedCategories: [...cur] });
+}
+
+function SectionHeaderRow({
+  row,
+}: {
+  row: Extract<BrowseRow, { t: 'header' }>;
+}) {
+  return (
+    <button
+      type="button"
+      data-testid={`section-header-${row.key}`}
+      onClick={(e) => {
+        e.stopPropagation();
+        toggleCollapsed(row.key);
+      }}
+      className="flex h-8 w-full items-center gap-2 border-b border-black/[.05] bg-zinc-50/90 px-3 text-left text-[12px] font-semibold text-zinc-600 transition-colors hover:bg-zinc-100/90 dark:border-white/[.06] dark:bg-white/[.04] dark:text-zinc-300 dark:hover:bg-white/[.07]"
+      style={{ height: LIST_ROW_H }}
+    >
+      <span
+        className="h-2 w-2 rounded-full"
+        style={{ background: CATEGORY_DOT[row.key] }}
+        aria-hidden
+      />
+      <span className="flex-1">{row.label}</span>
+      <span className="tabular-nums text-zinc-400">{row.count}</span>
+      <span className="text-[10px] text-zinc-400">{row.collapsed ? '展开' : '折叠'}</span>
+    </button>
+  );
+}
 
 // ── 名称标签 / 重命名（避免无 selector 的 useStore，防止每格订阅整棵 store）──
 export function NameLabel({
@@ -330,7 +370,21 @@ export function FolderBusyOverlay() {
 export function GridView() {
   const tab = useActiveTab();
   const items = useItems();
-  const orderedIds = useMemo(() => items.map((i) => i.id), [items]);
+  const grouped = !!tab.groupByCategory;
+  const collapsed = useMemo(() => new Set(tab.collapsedCategories ?? []), [tab.collapsedCategories]);
+  const sections = useMemo(
+    () => (grouped ? groupByCategory(items) : null),
+    [grouped, items],
+  );
+  const orderedIds = useMemo(() => {
+    if (!sections) return items.map((i) => i.id);
+    const ids: string[] = [];
+    for (const s of sections) {
+      if (collapsed.has(s.key)) continue;
+      for (const n of s.items) ids.push(n.id);
+    }
+    return ids;
+  }, [items, sections, collapsed]);
   const itemsById = useMemo(() => {
     const m = new Map<string, FSNode>();
     for (const n of items) m.set(n.id, n);
@@ -343,9 +397,13 @@ export function GridView() {
   const marqueeBase = useRef<string[]>([]);
   const size = tab.iconSize;
   const selectedSet = useMemo(() => new Set(tab.selection), [tab.selection]);
-  const { metrics, range, w: viewportW } = useGridWindow(wrapRef, items.length, size, 1);
-  const totalH = useMemo(() => totalGridHeight(items.length, metrics), [items.length, metrics]);
-  const slice = items.slice(range.start, range.end);
+  const virtCount = grouped ? 0 : items.length;
+  const { metrics, range, w: viewportW } = useGridWindow(wrapRef, Math.max(virtCount, 1), size, 0);
+  const totalH = useMemo(
+    () => (grouped ? undefined : totalGridHeight(items.length, metrics)),
+    [grouped, items.length, metrics],
+  );
+  const slice = grouped ? [] : items.slice(range.start, range.end);
   const orderedRef = useRef(orderedIds);
   orderedRef.current = orderedIds;
   const metricsRef = useRef(metrics);
@@ -440,7 +498,7 @@ export function GridView() {
     const active = st.tabs.find((t) => t.id === st.activeTabId);
     marqueeBase.current = e.ctrlKey || e.metaKey ? [...(active?.selection ?? [])] : [];
     let cur = { x1: sx, y1: sy, x2: sx, y2: sy };
-    const maxY = Math.max(0, totalH - 1);
+    const maxY = Math.max(0, (totalH ?? (wrapRef.current?.scrollHeight || 1)) - 1);
     const maxX = Math.max(0, (wrapRef.current?.scrollWidth || viewportW) - 1);
     const edge = 28;
     const move = (ev: PointerEvent) => {
@@ -486,36 +544,83 @@ export function GridView() {
 
   const renamingId = tab.renaming;
   const cutSet = h.cutSet;
+  const cellW = metrics.cellW;
+  const pad = metrics.padding;
 
   return (
     <div
       ref={wrapRef}
       data-testid="grid-scroll"
-      className="no-select h-full overflow-auto"
+      className="view-fade no-select h-full overflow-auto"
       onContextMenu={onDelegatedCtx}
       onClick={onDelegatedClick}
       onDoubleClick={onDelegatedDblClick}
       onDragStart={onDelegatedDragStart}
-      onPointerDown={onPointerDown}
+      onPointerDown={grouped ? undefined : onPointerDown}
     >
-      <div ref={contentRef} className="relative" style={{ height: totalH, minHeight: '100%' }}>
-        {slice.map((node, i) => {
-          const index = range.start + i;
-          const box = cellRect(index, metrics);
-          const needsFolderTarget = node.kind !== 'file' || node.id === ID.trash;
-          return (
-            <GridCell
-              key={`slot-${i}`}
-              node={node}
-              box={box}
-              size={size}
-              selected={selectedSet.has(node.id)}
-              cut={!!cutSet?.has(node.id)}
-              renaming={renamingId === node.id}
-              folderTargetProps={needsFolderTarget ? h.folderTarget(node) : undefined}
-            />
-          );
-        })}
+      <div
+        ref={contentRef}
+        className="relative"
+        style={grouped ? { minHeight: '100%', padding: pad } : { height: totalH, minHeight: '100%' }}
+      >
+        {grouped && sections
+          ? sections.map((sec) => {
+              const isCollapsed = collapsed.has(sec.key);
+              return (
+                <div key={sec.key} className="mb-3">
+                  <SectionHeaderRow
+                    row={{
+                      t: 'header',
+                      key: sec.key,
+                      label: sec.label,
+                      count: sec.items.length,
+                      collapsed: isCollapsed,
+                    }}
+                  />
+                  {!isCollapsed && (
+                    <div
+                      className="grid gap-1 pt-1"
+                      style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${cellW}px, 1fr))` }}
+                    >
+                      {sec.items.map((node) => {
+                        const needsFolderTarget = node.kind !== 'file' || node.id === ID.trash;
+                        return (
+                          <div key={node.id} className="flex justify-center py-1">
+                            <GridCell
+                              node={node}
+                              box={{ x: 0, y: 0, w: cellW, h: metrics.cellH }}
+                              size={size}
+                              selected={selectedSet.has(node.id)}
+                              cut={!!cutSet?.has(node.id)}
+                              renaming={renamingId === node.id}
+                              folderTargetProps={needsFolderTarget ? h.folderTarget(node) : undefined}
+                              flow
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })
+          : slice.map((node, i) => {
+              const index = range.start + i;
+              const box = cellRect(index, metrics);
+              const needsFolderTarget = node.kind !== 'file' || node.id === ID.trash;
+              return (
+                <GridCell
+                  key={`slot-${i}`}
+                  node={node}
+                  box={box}
+                  size={size}
+                  selected={selectedSet.has(node.id)}
+                  cut={!!cutSet?.has(node.id)}
+                  renaming={renamingId === node.id}
+                  folderTargetProps={needsFolderTarget ? h.folderTarget(node) : undefined}
+                />
+              );
+            })}
         {marquee && (
           <div
             className="pointer-events-none absolute z-20 rounded-[3px] border border-[#0a84ff]/50 bg-[#0a84ff]/[.12]"
@@ -535,6 +640,8 @@ type GridCellProps = {
   cut: boolean;
   renaming: boolean;
   folderTargetProps?: Record<string, unknown>;
+  /** 流式布局（分组网格）：非 absolute 定位 */
+  flow?: boolean;
 };
 
 const GridCell = memo(function GridCell({
@@ -545,6 +652,7 @@ const GridCell = memo(function GridCell({
   cut,
   renaming,
   folderTargetProps,
+  flow,
 }: GridCellProps) {
   return (
     <div
@@ -552,17 +660,22 @@ const GridCell = memo(function GridCell({
       draggable
       {...(folderTargetProps || {})}
       className={cn(
-        'group absolute flex cursor-default flex-col items-center gap-[5px] rounded-xl p-2 transition-colors [[data-scrolling]_&]:transition-none',
+        'group flex cursor-default flex-col items-center gap-[5px] rounded-xl p-2 transition-colors [[data-scrolling]_&]:transition-none',
+        flow ? 'relative' : 'absolute',
         cut && 'opacity-45',
       )}
-      style={{
-        left: box.x,
-        top: box.y,
-        width: box.w,
-        height: box.h,
-        contentVisibility: 'auto',
-        containIntrinsicSize: `${box.w}px ${box.h}px`,
-      }}
+      style={
+        flow
+          ? { width: box.w, contentVisibility: 'auto' as const }
+          : {
+              left: box.x,
+              top: box.y,
+              width: box.w,
+              height: box.h,
+              contentVisibility: 'auto' as const,
+              containIntrinsicSize: `${box.w}px ${box.h}px`,
+            }
+      }
     >
       <div
         className={cn(
@@ -597,7 +710,11 @@ const COLS: { k: SortKey | null; label: string; w: string; right?: boolean }[] =
 export function ListView() {
   const tab = useActiveTab();
   const items = useItems();
-  const orderedIds = useMemo(() => items.map((i) => i.id), [items]);
+  const rows = useBrowseRows();
+  const orderedIds = useMemo(
+    () => rows.filter((r): r is Extract<BrowseRow, { t: 'item' }> => r.t === 'item').map((r) => r.node.id),
+    [rows],
+  );
   const itemsById = useMemo(() => {
     const m = new Map<string, FSNode>();
     for (const n of items) m.set(n.id, n);
@@ -605,8 +722,8 @@ export function ListView() {
   }, [items]);
   const h = useFileHandlers(orderedIds);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const virt = useVirtualWindow(scrollRef, items.length, LIST_ROW_H, 8);
-  const slice = items.slice(virt.start, virt.end);
+  const virt = useVirtualWindow(scrollRef, rows.length, LIST_ROW_H, 4);
+  const slice = rows.slice(virt.start, virt.end);
   const selectedSet = useMemo(() => new Set(tab.selection), [tab.selection]);
   const hRef = useRef(h);
   hRef.current = h;
@@ -636,7 +753,7 @@ export function ListView() {
     <div
       ref={scrollRef}
       data-testid="list-scroll"
-      className="no-select h-full overflow-auto px-2 pb-3"
+      className="view-fade no-select h-full overflow-auto px-2 pb-3"
       onContextMenu={(e) => {
         const node = nodeFromEvent(e);
         if (!node) hRef.current.bgCtx(e);
@@ -677,7 +794,11 @@ export function ListView() {
       </div>
       <div style={{ height: virt.totalHeight, position: 'relative' }}>
         <div style={{ transform: `translateY(${virt.offsetY}px)` }}>
-          {slice.map((node, i) => {
+          {slice.map((row, i) => {
+            if (row.t === 'header') {
+              return <SectionHeaderRow key={`hdr-${row.key}-${i}`} row={row} />;
+            }
+            const node = row.node;
             const selected = selectedSet.has(node.id);
             const needsFolderTarget = node.kind !== 'file' || node.id === ID.trash;
             return (

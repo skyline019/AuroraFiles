@@ -8,6 +8,7 @@ import { Sidebar } from '@/components/Sidebar';
 import { Toolbar } from '@/components/Toolbar';
 import { StatusBar } from '@/components/StatusBar';
 import { GridView, ListView, ThisPCView, LocationHeader, FolderBusyOverlay } from '@/components/Views';
+import { CategoryBar } from '@/components/CategoryBar';
 import { ID } from '@/lib/fs';
 
 const ColumnView = lazy(() => import('@/components/ColumnsGallery').then((m) => ({ default: m.ColumnView })));
@@ -71,8 +72,9 @@ export default function ElectronShell() {
           <Toolbar />
           <div className="relative flex min-h-0 flex-1 flex-col">
             <LocationHeader count={items.length} />
+            <CategoryBar />
             <div id="aurora-main" className="relative min-h-0 flex-1" tabIndex={-1}>
-              <div className="h-full" key={`${currentNodeId(tab)}-${tab.view}`}>
+              <div className="view-fade h-full" key={`${currentNodeId(tab)}-${tab.view}-${tab.categoryFilter?.join(',') ?? ''}-${tab.groupByCategory ? 'g' : 'f'}`}>
                 <ContentView />
               </div>
               <FolderBusyOverlay />

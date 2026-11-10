@@ -6,12 +6,18 @@ import { api, isElectron } from './aurora';
 import { needsFfmpegImageDecode } from './mediaDecode';
 import { extOf } from './fs';
 
-const MAX_CACHE = 96;
+const MAX_CACHE = 48;
 const MAX_CONCURRENT = 3;
 const cache = new Map<string, string | null>();
 const inflight = new Map<string, Promise<string | null>>();
 let active = 0;
 const waiters: Array<() => void> = [];
+
+function maybeRevoke(url: string | null | undefined) {
+  if (url && typeof url === 'string' && url.startsWith('blob:')) {
+    try { URL.revokeObjectURL(url); } catch { /* */ }
+  }
+}
 
 function cacheSet(key: string, value: string | null) {
   if (cache.has(key)) cache.delete(key);
@@ -19,6 +25,7 @@ function cacheSet(key: string, value: string | null) {
   while (cache.size > MAX_CACHE) {
     const oldest = cache.keys().next().value as string | undefined;
     if (!oldest) break;
+    maybeRevoke(cache.get(oldest));
     cache.delete(oldest);
   }
 }
@@ -131,15 +138,24 @@ export async function resolveVideoThumbUrl(nodeId: string): Promise<string | nul
 
 export function clearMediaThumbCache(absPath?: string) {
   if (!absPath) {
+    for (const v of cache.values()) maybeRevoke(v);
     cache.clear();
     inflight.clear();
     return;
   }
   const norm = absPath.replace(/\\/g, '/').toLowerCase();
   for (const k of [...cache.keys()]) {
-    if (k.toLowerCase().includes(norm)) cache.delete(k);
+    if (k.toLowerCase().includes(norm)) {
+      maybeRevoke(cache.get(k));
+      cache.delete(k);
+    }
   }
   for (const k of [...inflight.keys()]) {
     if (k.toLowerCase().includes(norm)) inflight.delete(k);
   }
+}
+
+/** 测试/诊断：当前 LRU 条数 */
+export function mediaThumbCacheSize(): number {
+  return cache.size;
 }

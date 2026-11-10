@@ -7,9 +7,16 @@ import {
 import { api, isElectron, REAL_DEMO } from './aurora';
 import { buildRealSkeleton, demoNodes, hydrateFolder, resolvePathId } from './realFs';
 import { setPersistedTags } from './tagStore';
-import { rankSearchResults } from './searchRank';
+import { parseSearchQuery, rankSearchResults } from './searchRank';
 import { searchSourceLabel } from './indexLabel';
 import { bumpGen, createDebouncedRefCount, isCurrentGen } from './asyncGate';
+import {
+  browseRowsFromItems,
+  filterByCategories,
+  matchesTypeToken,
+  type BrowseRow,
+} from './groupItems';
+import type { Category } from './fs';
 
 /** 进夹/刷新引用计数：并发 hydrate 不会被先完成的任务误关 */
 let folderRefreshGate: ReturnType<typeof createDebouncedRefCount> | null = null;
@@ -19,6 +26,29 @@ let folderHydrateGen = 0;
 /** 输入防抖深搜：打字即走索引，无需 Enter */
 let deepSearchDebounce: ReturnType<typeof setTimeout> | null = null;
 const DEEP_SEARCH_DEBOUNCE_MS = 48;
+/** 本轮深搜新插入的临时节点 id，clear 时 prune */
+let deepSearchTempIds = new Set<string>();
+
+function pruneDeepSearchTemps(
+  nodes: Record<string, FSNode>,
+  keepHits: string[] | null,
+): Record<string, FSNode> {
+  if (!deepSearchTempIds.size) return nodes;
+  const keep = new Set(keepHits || []);
+  let changed = false;
+  const next = { ...nodes };
+  for (const id of deepSearchTempIds) {
+    if (keep.has(id)) continue;
+    if (!next[id]) continue;
+    // 仅删除「无 childrenIds、且父级不是真盘树里已有」的临时挂载
+    const n = next[id];
+    if (n.childrenIds?.length) continue;
+    delete next[id];
+    changed = true;
+  }
+  deepSearchTempIds = keep.size ? new Set([...deepSearchTempIds].filter((id) => keep.has(id))) : new Set();
+  return changed ? next : nodes;
+}
 
 function getFolderRefreshGate(set: (p: Partial<Store> | ((s: Store) => Partial<Store>)) => void) {
   if (!folderRefreshGate) {
@@ -52,6 +82,9 @@ const mkTab = (loc: Location = { t: 'node', id: ID.desktop }): TabState => ({
   search: '',
   showHidden: false,
   galleryFilesOnly: true,
+  categoryFilter: [],
+  groupByCategory: false,
+  collapsedCategories: [],
 });
 
 const sanitize = (tabs: TabState[], nodes: Record<string, FSNode>): TabState[] =>
@@ -771,7 +804,8 @@ export const useStore = create<Store>()((set, get) => {
       }
       deepSearchGen = bumpGen(deepSearchGen);
       if (isElectron()) void api().searchCancel().catch(() => undefined);
-      set({ deepHits: null, deepMeta: null, deepSearching: false });
+      const nodes = pruneDeepSearchTemps(get().nodes, null);
+      set({ nodes, deepHits: null, deepMeta: null, deepSearching: false });
     },
 
     cancelDeepSearch: () => {
@@ -867,16 +901,21 @@ export const useStore = create<Store>()((set, get) => {
           return;
         }
         const ranked = rankSearchResults(res.items, q, 400);
-        const nodes = { ...get().nodes };
+        // 先丢掉上一轮临时节点，避免 nodes 单调膨胀
+        let nodes = pruneDeepSearchTemps(get().nodes, null);
+        nodes = { ...nodes };
         const hits: string[] = [];
+        const nextTemps = new Set<string>();
         for (const it of ranked) {
           const prev = nodes[it.path];
+          const isNew = !prev;
           nodes[it.path] = {
             id: it.path,
             name: it.name,
             kind: it.kind,
-            parentId: rootId,
-            childrenIds: prev?.childrenIds ?? [],
+            parentId: prev?.parentId ?? rootId,
+            // 轻量：不复制大 childrenIds；临时节点空数组
+            childrenIds: prev?.childrenIds?.length ? prev.childrenIds : [],
             ext: it.kind === 'file' ? it.name.split('.').pop()?.toLowerCase() : undefined,
             size: it.size,
             createdAt: prev?.createdAt ?? it.modifiedAt,
@@ -884,9 +923,12 @@ export const useStore = create<Store>()((set, get) => {
             accessedAt: Date.now(),
             tags: prev?.tags ?? [],
             favorite: prev?.favorite,
+            // 不挂 thumbUrl/imageUrl，避免深搜结果批量解码
           };
+          if (isNew) nextTemps.add(it.path);
           hits.push(it.path);
         }
+        deepSearchTempIds = nextTemps;
         const cached = !!(res as { cached?: boolean }).cached;
         if (!isCurrentGen(gen, deepSearchGen)) return;
         set({
@@ -1182,6 +1224,19 @@ export const useStore = create<Store>()((set, get) => {
 export const useActiveTab = (): TabState =>
   useStore(s => s.tabs.find(t => t.id === s.activeTabId) ?? s.tabs[0]);
 
+function applyTabCategoryFilter(list: FSNode[], tab: TabState): FSNode[] {
+  if (!tab.categoryFilter?.length) return list;
+  return filterByCategories(list, tab.categoryFilter as Category[], { keepFolders: true });
+}
+
+function applyDeepSearchFilters(list: FSNode[], tab: TabState): FSNode[] {
+  let out = list;
+  if (!tab.showHidden) out = out.filter((n) => !n.hidden);
+  const parsed = parseSearchQuery(tab.search);
+  if (parsed.type) out = out.filter((n) => matchesTypeToken(n, parsed.type!));
+  return applyTabCategoryFilter(out, tab);
+}
+
 export const useItems = (): FSNode[] => {
   const nodes = useStore(s => s.nodes);
   const deepHits = useStore(s => s.deepHits);
@@ -1189,11 +1244,35 @@ export const useItems = (): FSNode[] => {
   return useMemo(() => {
     if (deepHits?.length && tab.search.trim()) {
       const list = deepHits.map(id => nodes[id]).filter((n): n is FSNode => !!n && !n.deleted);
-      if (!tab.showHidden) return list.filter(n => !n.hidden);
-      return list;
+      return applyDeepSearchFilters(list, tab);
     }
     return visibleItems(nodes, tab);
   }, [nodes, tab, deepHits]);
+};
+
+/** 忽略 categoryFilter，供分类芯片统计「范围内有哪些类」 */
+export const useItemsForChips = (): FSNode[] => {
+  const nodes = useStore(s => s.nodes);
+  const deepHits = useStore(s => s.deepHits);
+  const tab = useActiveTab();
+  return useMemo(() => {
+    const tabNoCat = { ...tab, categoryFilter: [] as Category[] };
+    if (deepHits?.length && tab.search.trim()) {
+      const list = deepHits.map(id => nodes[id]).filter((n): n is FSNode => !!n && !n.deleted);
+      return applyDeepSearchFilters(list, tabNoCat);
+    }
+    return visibleItems(nodes, tabNoCat);
+  }, [nodes, tab, deepHits]);
+};
+
+/** 分组扁平行（节头 sentinel + 条目）；未分组时全是 item 行 */
+export const useBrowseRows = (): BrowseRow[] => {
+  const items = useItems();
+  const tab = useActiveTab();
+  return useMemo(
+    () => browseRowsFromItems(items, !!tab.groupByCategory, tab.collapsedCategories ?? []),
+    [items, tab.groupByCategory, tab.collapsedCategories],
+  );
 };
 
 export const useCurrentLocation = (): Location => {

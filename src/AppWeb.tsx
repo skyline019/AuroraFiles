@@ -6,6 +6,7 @@ import { Sidebar } from '@/components/Sidebar';
 import { Toolbar } from '@/components/Toolbar';
 import { StatusBar } from '@/components/StatusBar';
 import { GridView, ListView, ThisPCView, LocationHeader, FolderBusyOverlay } from '@/components/Views';
+import { CategoryBar } from '@/components/CategoryBar';
 import { ColumnView, GalleryView } from '@/components/ColumnsGallery';
 import { FolderIcon } from '@/components/icons';
 import { ID } from '@/lib/fs';
@@ -118,10 +119,11 @@ function Window() {
           <Toolbar />
           <div className="relative flex min-h-0 flex-1 flex-col">
             <LocationHeader count={items.length} />
+            <CategoryBar />
             <div id="aurora-main" className="relative min-h-0 flex-1" tabIndex={-1}>
               <AnimatePresence mode="wait">
                 <motion.div
-                  key={locKey}
+                  key={`${locKey}-${tab.categoryFilter?.join(',') ?? ''}-${tab.groupByCategory ? 'g' : 'f'}`}
                   initial={{ opacity: 0, y: 7 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -4 }}

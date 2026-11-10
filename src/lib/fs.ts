@@ -50,6 +50,12 @@ export interface TabState {
   showHidden: boolean;
   /** 画廊底栏是否只显示文件（默认 true） */
   galleryFilesOnly: boolean;
+  /** 空 = 全部类型；非空 = 仅这些 Category（文件夹始终保留） */
+  categoryFilter: Category[];
+  /** 按类型分节显示 */
+  groupByCategory: boolean;
+  /** 已折叠的分组键（Category | 'folder'） */
+  collapsedCategories: string[];
 }
 
 export const ID = {
@@ -415,23 +421,89 @@ export function sortNodes(nodes: Record<string, FSNode>, list: FSNode[], key: So
 
 export function visibleItems(nodes: Record<string, FSNode>, tab: TabState): FSNode[] {
   const loc = tab.history[tab.hi];
-  const q = tab.search.trim().toLowerCase();
+  const rawQ = tab.search.trim();
   let list: FSNode[];
-  if (q) {
+  if (rawQ) {
+    // 延迟导入避免 fs ↔ searchRank 环；可见项路径用轻量内联解析
+    const parsed = parseInlineSearch(rawQ);
+    const q = parsed.text.toLowerCase();
     const nid0 = locationNode(loc);
     const base = loc.t === 'tag'
       ? poolFor(nodes, loc)
       : (nid0 === ID.recent || nid0 === ID.quick || nid0 === ID.trash)
         ? poolFor(nodes, loc)
         : descendantsAlive(nodes, nid0 ?? 'root');
-    list = base.filter(n =>
-      (n.name.toLowerCase().includes(q) || (n.ext ?? extOf(n.name)) === q.replace(/^\./, '') || n.tags.some(t => tagLabel(t).includes(q))),
-    );
+    list = base.filter((n) => {
+      if (parsed.type) {
+        const ext = (n.ext ?? extOf(n.name)).toLowerCase();
+        const typeTok = parsed.type;
+        if (n.kind === 'file') {
+          const cat = categoryOf(ext);
+          const ok = ext === typeTok
+            || cat === typeTok
+            || TYPE_ALIAS[typeTok] === cat;
+          if (!ok) return false;
+        } else if (parsed.text) {
+          /* folders may still match name */
+        } else {
+          return false;
+        }
+      }
+      if (parsed.tag) {
+        const tagHit = n.tags.some((t) => tagLabel(t).includes(parsed.tag!) || t === parsed.tag);
+        if (!tagHit) return false;
+      }
+      if (!q) return true;
+      return n.name.toLowerCase().includes(q)
+        || (n.ext ?? extOf(n.name)) === q.replace(/^\./, '')
+        || n.tags.some((t) => tagLabel(t).includes(q));
+    });
   } else {
     list = poolFor(nodes, loc);
   }
   if (!tab.showHidden) list = list.filter(n => !n.hidden);
+  if (tab.categoryFilter?.length) {
+    const want = new Set(tab.categoryFilter);
+    list = list.filter((n) => {
+      if (n.kind === 'folder' || n.kind === 'drive' || n.kind === 'special') return true;
+      return want.has(categoryOf(n.ext ?? extOf(n.name)));
+    });
+  }
   return sortNodes(nodes, list, tab.sortKey, tab.sortDir);
+}
+
+const TYPE_ALIAS: Record<string, Category> = {
+  image: 'image', img: 'image', photo: 'image', 图片: 'image',
+  video: 'video', 视频: 'video',
+  audio: 'audio', music: 'audio', 音频: 'audio', 音乐: 'audio',
+  archive: 'archive', zip: 'archive', 压缩: 'archive', 压缩包: 'archive',
+  app: 'app', 应用: 'app',
+  code: 'code', 代码: 'code',
+  doc: 'doc', word: 'doc', 文档: 'doc',
+  sheet: 'sheet', excel: 'sheet', 表格: 'sheet',
+  slide: 'slide', 演示: 'slide',
+  pdf: 'pdf',
+  text: 'text', 文本: 'text',
+  font: 'font', 字体: 'font',
+  db: 'db', 数据库: 'db',
+  sys: 'sys', 系统: 'sys',
+  link: 'link', 快捷方式: 'link',
+  other: 'other', 其他: 'other',
+};
+
+function parseInlineSearch(raw: string): { text: string; tag?: string; type?: string } {
+  let text = raw.trim();
+  let tag: string | undefined;
+  let type: string | undefined;
+  text = text.replace(/\btag:(\S+)/gi, (_, v) => {
+    tag = String(v).toLowerCase();
+    return ' ';
+  });
+  text = text.replace(/\btype:(\S+)/gi, (_, v) => {
+    type = String(v).toLowerCase().replace(/^\./, '');
+    return ' ';
+  });
+  return { text: text.trim().replace(/\s+/g, ' '), tag, type };
 }
 
 export function nodeTitle(nodes: Record<string, FSNode>, loc: Location): string {

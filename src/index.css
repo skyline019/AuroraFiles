@@ -131,3 +131,18 @@ select:focus-visible {
   outline: 2px solid #fff;
   outline-offset: 2px;
 }
+
+/* ── 分类条 / 视图过渡（Electron 与 Web 共用，无 framer） ── */
+@keyframes view-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.view-fade {
+  animation: view-fade-in 120ms ease-out;
+}
+.cat-chip {
+  transition-property: background-color, color, box-shadow, transform;
+  transition-duration: 120ms;
+  transition-timing-function: ease-out;
+}
+.duration-120 { transition-duration: 120ms; }

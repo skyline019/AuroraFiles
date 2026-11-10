@@ -130,7 +130,7 @@ function GlyphFallback({ size, from, to, Icon }: {
   return <Squircle size={size} from={from} to={to}><Icon size={size * 0.5} strokeWidth={1.8} /></Squircle>;
 }
 
-/** Resolve only when near viewport; queue through thumbBudget concurrency cap. */
+/** Resolve only when near viewport; leave viewport → drop resolved URL to free memory. */
 function useLazyThumbUrl(
   embedded: string | null,
   resolve: () => Promise<string | null>,
@@ -139,6 +139,7 @@ function useLazyThumbUrl(
   const hostRef = useRef<HTMLSpanElement | null>(null);
   const [url, setUrl] = useState<string | null>(embedded);
   const [visible, setVisible] = useState(!!embedded);
+  const resolvedRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (embedded) {
@@ -147,37 +148,41 @@ function useLazyThumbUrl(
       return;
     }
     setUrl(null);
+    resolvedRef.current = null;
     const el = hostRef.current;
     if (!el || typeof IntersectionObserver === 'undefined') {
       setVisible(true);
       return;
     }
-    let seen = false;
     const io = new IntersectionObserver(
       (entries) => {
-        if (entries.some((e) => e.isIntersecting)) {
-          seen = true;
-          setVisible(true);
-          io.disconnect();
+        const on = entries.some((e) => e.isIntersecting);
+        setVisible(on);
+        if (!on) {
+          // 离屏丢弃已解析 URL（blob: 由 mediaThumb LRU 统一 revoke）
+          setUrl(null);
         }
       },
-      { rootMargin: '120px' },
+      { rootMargin: '64px' },
     );
     io.observe(el);
-    return () => {
-      io.disconnect();
-      if (!seen) setVisible(false);
-    };
+    return () => io.disconnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [embedded, ...deps]);
 
   useEffect(() => {
     if (embedded || !visible) return;
+    let cancelled = false;
     const job = enqueueThumbJob(resolve);
     void job.promise.then((u) => {
-      if (u) setUrl(u);
+      if (cancelled || !u) return;
+      resolvedRef.current = u;
+      setUrl(u);
     });
-    return () => job.cancel();
+    return () => {
+      cancelled = true;
+      job.cancel();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, embedded, ...deps]);
 
